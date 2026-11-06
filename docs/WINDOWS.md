@@ -11,7 +11,7 @@ node -v
 ## 2. Get the scanner
 
 ```powershell
-git clone https://github.com/MNSH-Nexo/cfqoe-scanner.git
+git clone https://github.com/Altonomega/cfqoe-scanner.git
 cd cfqoe-scanner
 ```
 

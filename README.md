@@ -33,7 +33,7 @@ CFQoE Scanner روی **Windows، Linux و Android/Termux** اجرا می‌شو�
 پیش‌نیاز: Node.js 20 یا بالاتر.
 
 ```bash
-git clone https://github.com/MNSH-Nexo/cfqoe-scanner.git
+git clone https://github.com/Altonomega/cfqoe-scanner.git
 cd cfqoe-scanner
 ```
 
@@ -42,7 +42,7 @@ cd cfqoe-scanner
 ## Linux
 
 ```bash
-git clone https://github.com/MNSH-Nexo/cfqoe-scanner.git
+git clone https://github.com/Altonomega/cfqoe-scanner.git
 cd cfqoe-scanner
 chmod +x start-cfqoe.sh
 ./start-cfqoe.sh
@@ -53,7 +53,7 @@ chmod +x start-cfqoe.sh
 > پروژه را داخل Home ترموکس نگه دارید، نه Download یا `/sdcard`.
 
 ```bash
-pkg update -y && pkg install -y git && git clone https://github.com/MNSH-Nexo/cfqoe-scanner.git && cd cfqoe-scanner && bash install-termux.sh
+pkg update -y && pkg install -y git && git clone https://github.com/Altonomega/cfqoe-scanner.git && cd cfqoe-scanner && bash install-termux.sh
 ```
 
 اجرای دفعات بعد:

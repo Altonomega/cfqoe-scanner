@@ -5,7 +5,7 @@
 ## نصب با یک دستور
 
 ```bash
-pkg update -y && pkg install -y git && git clone https://github.com/MNSH-Nexo/cfqoe-scanner.git && cd cfqoe-scanner && bash install-termux.sh
+pkg update -y && pkg install -y git && git clone https://github.com/Altonomega/cfqoe-scanner.git && cd cfqoe-scanner && bash install-termux.sh
 ```
 
 پروژه را داخل `$HOME` نگه دارید، نه `/sdcard`، `/storage` یا Download.
