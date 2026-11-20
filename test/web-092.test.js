@@ -637,3 +637,149 @@ test("D7a: after a stop, the partial results also render in place", async () => 
   await until(() => h.el("#sc-results").innerHTML.includes("1.1.1.1"), 10000, "in-place table after stop");
   assert.equal(h.eval("app.viewName"), "scan", "no navigation happened");
 });
+
+/* ---------------- D7 generalization: every mode, every terminal shape ---------------- */
+const reportFor = (mode, runId, base = measuredReport) => ({ ...base, mode, runId });
+
+test("D7: quick and research render in place at completion and after a stop", async () => {
+  for (const mode of ["quick", "research"]) {
+    for (const status of ["complete", "canceled"]) {
+      const runId = `run-${mode}-${status}`;
+      const h = await bootCanned({ snapshot: cannedSnapshot(), results: reportFor(mode, runId) });
+      h.goto(`#/scan/${mode}`);
+      h.eval(`app.onEvent('run-state', { status: '${status}', mode: '${mode}', runId: '${runId}' })`);
+      await until(() => h.el("#sc-results").innerHTML.includes("1.1.1.1"), 10000,
+        `${mode}/${status}: in-place table`);
+      assert.equal((h.el("#sc-results").innerHTML.match(/clickable/g) || []).length, 2,
+        `${mode}/${status}: both ranked rows are on the console page`);
+      assert.equal(h.eval("app.viewName"), "scan", `${mode}/${status}: no navigation happened`);
+    }
+  }
+});
+
+test("D7: a failed scan run renders in place when a report was filed — and only then", async () => {
+  const withReport = await bootCanned({ snapshot: cannedSnapshot(), results: measuredReport });
+  withReport.goto("#/scan/full");
+  withReport.eval("app.onEvent('run-state', { status: 'failed', mode: 'full', runId: 'run-d7' })");
+  await until(() => withReport.el("#sc-results").innerHTML.includes("1.1.1.1"), 10000,
+    "failed-with-report: in-place table");
+  const noReport = await bootCanned({ snapshot: cannedSnapshot(), results: {} });
+  noReport.goto("#/scan/full");
+  noReport.eval("app.onEvent('run-state', { status: 'failed', mode: 'full', runId: 'run-none' })");
+  await flush(300);
+  assert.equal(noReport.el("#sc-results").innerHTML, "", "failed-without-report: nothing is dressed up as a result");
+});
+
+test("D7: an all-unmeasured quick run headlines in place, like every other mode", async () => {
+  const h = await bootCanned({ snapshot: cannedSnapshot(), results: reportFor("quick", "run-q0", unmeasuredReport) });
+  h.goto("#/scan/quick");
+  h.eval("app.onEvent('run-state', { status: 'complete', mode: 'quick', runId: 'run-q0' })");
+  await until(() => h.el("#sc-results").innerHTML.includes("none responded"), 10000, "in-place headline");
+  assert.ok(!h.el("#sc-results").innerHTML.includes("<table"), "no empty table in place either");
+});
+
+/* ---------------- D7-genome: the Hard console presents its results in place ---------------- */
+const hardReport = reportFor("hard", "run-d7h");
+const hardSnap = (status) => cannedSnapshot({
+  run: { status, mode: "hard", runId: "run-d7h", phase: "hard-finalize", counters: {}, startedAt: "2026-11-21T00:00:00.000Z" },
+});
+
+test("D7-genome: a stopped Hard run renders its ranked table on the genome page", async () => {
+  const h = await bootCanned({ snapshot: hardSnap("running"), results: hardReport });
+  h.goto("#/genome");
+  await flush(150);
+  assert.equal(h.el("#g-results").innerHTML, "", "nothing renders while the run is live");
+  h.eval("app.onEvent('run-state', { status: 'paused-done', mode: 'hard', runId: 'run-d7h' })");
+  await until(() => h.el("#g-results").innerHTML.includes("1.1.1.1"), 10000, "in-place table after stop");
+  assert.equal((h.el("#g-results").innerHTML.match(/clickable/g) || []).length, 2, "both ranked rows are on the genome page");
+  assert.equal(h.eval("app.viewName"), "genome", "no navigation happened");
+});
+
+test("D7-genome: a completed Hard run is already rendered when the page opens", async () => {
+  const h = await bootCanned({ snapshot: hardSnap("complete"), results: hardReport });
+  h.goto("#/genome");
+  await until(() => h.el("#g-results").innerHTML.includes("1.1.1.1"), 10000, "in-place table at mount");
+  assert.equal(h.eval("app.viewName"), "genome", "no navigation happened");
+});
+
+test("D7-genome: an all-unmeasured Hard outcome headlines in place; a failed run with a report renders", async () => {
+  const dead = { ...unmeasuredReport, mode: "hard", runId: "run-d7h" };
+  const h = await bootCanned({ snapshot: hardSnap("paused-done"), results: dead });
+  h.goto("#/genome");
+  await until(() => h.el("#g-results").innerHTML.includes("none responded"), 10000, "in-place headline");
+  assert.ok(!h.el("#g-results").innerHTML.includes("<table"), "no empty table on the genome page");
+  const failed = await bootCanned({ snapshot: hardSnap("running"), results: hardReport });
+  failed.goto("#/genome");
+  failed.eval("app.onEvent('run-state', { status: 'failed', mode: 'hard', runId: 'run-d7h' })");
+  await until(() => failed.el("#g-results").innerHTML.includes("1.1.1.1"), 10000,
+    "failed-with-report: in-place table on the genome page");
+});
+
+test("D7-genome: a scan-mode run never leaks its table onto the genome page", async () => {
+  const h = await bootCanned({
+    snapshot: cannedSnapshot({ run: { status: "complete", mode: "full", runId: "run-d7", phase: "tunnel", counters: {}, startedAt: "2026-11-21T00:00:00.000Z" } }),
+    results: measuredReport,
+  });
+  h.goto("#/genome");
+  await flush(300);
+  assert.equal(h.el("#g-results").innerHTML, "", "the genome page stays clean for other modes' runs");
+});
+
+/* ---------------- D8: the notes stream speaks the reader's language ---------------- */
+test("D8: known engine line shapes localize; unknown lines pass through as data", async () => {
+  const h = await bootCanned({ snapshot: cannedSnapshot(), results: {} });
+  const tl = (s) => h.eval(`tickerLine(${JSON.stringify(s)})`);
+  assert.equal(tl("Run stopped — progress is saved."), "Run stopped — progress is saved.");
+  assert.equal(plain(tl("Run complete — 3 eligible IPs.")), "Run complete — 3 eligible IPs.");
+  assert.equal(tl("Run failed — see Diagnostics for the log."), "Run failed — see Diagnostics for the log.");
+  assert.equal(plain(tl("web transfer · 1.2.3.4")), "Web · 1.2.3.4");
+  assert.equal(plain(tl("real load · 1.2.3.4")), "Real load · 1.2.3.4");
+  assert.equal(plain(tl("verifying finalists (accept)")), "Verifying finalists — A finalist was accepted");
+  assert.equal(tl("verifying finalists"), "Verifying finalists");
+  assert.equal(plain(tl("primer phase complete")), "Primers complete");
+  assert.equal(tl("primer aborted (dead-path)"), "Primer aborted — the path answers nothing");
+  assert.equal(tl("delayed retry of transient failures"), "Delayed retry of transient failures");
+  assert.equal(tl("an unheard-of engine note"), "an unheard-of engine note");
+  assert.equal(tl("1.2.3.4"), "1.2.3.4", "a bare IP is data, untouched");
+  // …and in Persian the same stream reads Persian.
+  h.eval("lang = 'fa'; applyLang();");
+  assert.equal(h.eval(`journalText("ticker", { text: "Run stopped — progress is saved." })`),
+    "اجرا متوقف شد — پیشرفت ذخیره شد.");
+  assert.equal(plain(h.eval(`tickerLine("primer phase complete")`)), "پرایمرها کامل شد");
+  assert.equal(plain(h.eval(`tickerLine("streaming · 1.2.3.4")`)), "استریم · 1.2.3.4");
+  assert.equal(plain(h.eval(`tickerLine("Run complete — 3 eligible IPs.")`)), "اجرا کامل شد — 3 آی‌پی واجد شرایط.");
+});
+
+/* ---------------- D8: motion under calm, life without it ---------------- */
+test("D8: calm withholds the arrival animation; without calm the newest note settles in", async () => {
+  const h = await bootCanned({ snapshot: cannedSnapshot(), results: {} });
+  assert.equal(h.eval("prefs.calm"), true, "the rig boots calmed (reduced-motion matches)");
+  h.goto("#/genome");
+  await flush(120);
+  h.eval("app.onEvent('ticker', { text: 'web transfer · 1.2.3.4' })");
+  h.eval("app.onEvent('counters', {})");
+  await flush(80);
+  assert.ok(!h.el("#g-ticker").innerHTML.includes("note-in"), "calm: the ticker's newest note carries no arrival animation");
+  assert.ok(!h.el("#g-journal").innerHTML.includes("note-in"), "calm: the journal's newest line carries no arrival animation");
+  h.eval("prefs.calm = false");
+  h.eval("app.onEvent('ticker', { text: 'streaming · 1.2.3.4' })");
+  h.eval("app.applySnapshot(app.state)");
+  await flush(80);
+  assert.ok(h.el("#g-ticker").innerHTML.includes("note-in"), "calm off: the ticker's newest note animates in");
+  assert.ok(h.el("#g-journal").innerHTML.includes("note-in"), "calm off: the journal's newest line animates in");
+  // The ticker renders the localized line, not the engine's raw text.
+  assert.ok(plain(h.el("#g-ticker").innerHTML).includes("Streaming · 1.2.3.4"), "the ticker speaks the reader's language");
+});
+
+/* ---------------- D10a: card markup uniformity ---------------- */
+test("D10a: every dashboard mode card ends with its Start button", async () => {
+  const h = await bootCanned({ snapshot: cannedSnapshot(), results: {} });
+  const cards = h.el("#view").innerHTML.split('<div class="run-card">').slice(1);
+  assert.equal(cards.length, 4, "four mode cards render");
+  for (const c of cards) {
+    const end = c.indexOf("</button></div>");
+    assert.ok(end > 0, "the card closes on its button");
+    assert.ok(c.indexOf("data-start=") > c.indexOf("<p>") && c.indexOf("data-start=") < end,
+      "the Start button follows the description — the pinned baseline row");
+  }
+});

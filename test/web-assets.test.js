@@ -118,7 +118,65 @@ test('size ratchet: the three assets stay a localhost-instant payload', () => {
   // Design budget was ≤120 KB pre-bilingual; two full string tables and
   // RTL support legitimately grew it. Ratchet at 160 KB so it cannot
   // creep silently from here (see the W4 report for the revision note).
-  assert.ok(total <= 160 * 1024, 'total ' + total + ' bytes exceeds the 160 KB ratchet');
+  // 0.9.2's second web wave (in-place results on both consoles, the
+  // localized + animated notes stream, the legend rebuild, the phone
+  // pass) raised it one deliberate 8 KB step to 168 KB — after the
+  // duplicated inline-results bodies were factored into one factory
+  // and the dead .rail-h/.plate-wrap/.mini-plate rules were removed.
+  assert.ok(total <= 168 * 1024, 'total ' + total + ' bytes exceeds the 168 KB ratchet');
+});
+
+test('D9: the eleven plate states have pairwise-distinct legend swatches in both themes', () => {
+  const css = read('app.css'), js = read('app.js');
+  const varBlock = (re) => {
+    const out = {};
+    for (const [, k, v] of css.match(re)[1].matchAll(/(--[\w-]+):\s*([^;]+);/g)) out[k] = v.trim();
+    return out;
+  };
+  const light = varBlock(/:root\s*\{([^}]*)\}/);
+  const dark = { ...light, ...varBlock(/\[data-theme="dark"\]\s*\{([^}]*)\}/) };
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rule = (sel) => {
+    const m = css.match(new RegExp(escRe(sel) + '\\s*\\{([^}]*)\\}'));
+    return m ? m[1].replace(/\s+/g, ' ').trim() : '';
+  };
+  const resolve = (s, vars) => s.replace(/var\((--[\w-]+)\)/g, (_, k) => vars[k] || k);
+  const states = [['', 'unprobed'], ['sw-known', 'known'], ['sw-g', 'priming'], ['sw-a', 'alive'],
+    ['sw-absent', 'absent'], ['sw-edge', 'hot'], ['sw-suspect', 'suspect'], ['sw-split', 'split'],
+    ['sw-ink', 'exhausted'], ['sw-ring', 'finalist'], ['sw-win', 'winner']];
+  for (const [themeName, vars] of [['light', light], ['dark', dark]]) {
+    const sigs = states.map(([cls]) => {
+      const base = cls ? '.legend .' + cls : '.legend .sw';
+      return resolve(rule(base) + '|' + rule(base + '::after'), vars);
+    });
+    assert.equal(new Set(sigs).size, states.length, themeName + ': every state reads differently');
+    const sig = Object.fromEntries(states.map(([, k], i) => [k, sigs[i]]));
+    assert.notEqual(sig.absent, sig.unprobed, themeName + ': absent carries its tick, unprobed is bare');
+    assert.notEqual(sig.winner, sig.finalist, themeName + ': winner carries its dot, finalist only the ring');
+    assert.notEqual(sig.known, sig.exhausted, themeName + ': known carries its corner tick');
+    assert.notEqual(sig.suspect, sig.hot, themeName + ': gold below is not gold on top');
+  }
+  // The markup gives every state its own class — no shared swatch,
+  // no inline-style hacks.
+  for (const [cls, k] of states.slice(1)) assert.ok(js.includes(`"${cls}", "${k}"`), 'legend entry: ' + k);
+  assert.ok(!js.includes('"sw-c", "winner"'), 'winner no longer shares the finalist swatch');
+  assert.ok(!js.includes('border-top:2px solid var(--g)'), 'the quote-hack inline styles are gone');
+});
+
+test('D10a: run cards pin the Start button to a shared baseline by construction', () => {
+  const css = read('app.css');
+  assert.ok(/\.run-card \{[^}]*display: flex; flex-direction: column/.test(css), 'cards are flex columns');
+  assert.ok(/\.run-card \.btn \{[^}]*margin-top: auto/.test(css), 'the button is pinned to the card bottom');
+  assert.ok(!/\.run-card p \{[^}]*min-height/.test(css), 'the fixed description-height hack is gone');
+});
+
+test('D10b: phone rules — tap floors, live-top column shed, data-span wrapping', () => {
+  const css = read('app.css');
+  const phone = css.slice(css.indexOf('@media (max-width: 760px)'));
+  for (const pin of ['.switch { min-height: 40px', '.checks label { min-height: 40px', '.chip { min-height: 40px',
+    'details.advanced > summary { min-height: 40px', '#g-top .c-block { display: none',
+    '.d { display: inline; overflow-wrap: anywhere'])
+    assert.ok(phone.includes(pin), 'phone pin present: ' + pin);
 });
 
 test('bundled font: Vazirmatn subsets stay within their own byte budget, license included', () => {
