@@ -151,11 +151,12 @@ export function createRunManager({ layout, state, webLog }) {
           startedAt,
           error: { class: "internal", message: error.message },
         });
-        // No "failed" exists in the client's run-state vocabulary;
-        // the failure itself is on record in run.end and the log
-        // tail. The stream reports the run as stopped, and the next
-        // snapshot resync shows the idle truth.
-        state.finishRun({ status: "canceled", mode, runId, report: null });
+        // The run-state vocabulary includes "failed" (W5, Proof's
+        // F-2): a crashed run must not masquerade as a user stop.
+        // The client shows its failure notice on this status, and
+        // the failure itself is on record in run.end and the log.
+        state.ticker("Run failed — see Diagnostics for the log.");
+        state.finishRun({ status: "failed", mode, runId, report: null });
         throw error;
       } finally {
         await logger.close();

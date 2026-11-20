@@ -77,10 +77,11 @@ const AUTH_FAIL_SUMMARY_EVERY = 50;
 const CSP =
   "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'";
 
-// The whole static surface: three files, read once at startup from
-// the resolved public directory. Serving from memory makes the
-// confinement property (R-15) structural — no request path is ever
-// resolved against the filesystem for static content.
+// The whole static surface: the three code assets plus the bundled
+// Vazirmatn subsets, read once at startup from the resolved public
+// directory. Serving from memory makes the confinement property
+// (R-15) structural — no request path is ever resolved against the
+// filesystem for static content.
 function loadAssets() {
   const publicDir = fileURLToPath(new URL("./public/", import.meta.url));
   const read = (name) => fs.readFileSync(path.join(publicDir, name));
@@ -89,6 +90,8 @@ function loadAssets() {
     ["/index.html", { body: read("index.html"), type: "text/html; charset=utf-8" }],
     ["/app.css", { body: read("app.css"), type: "text/css; charset=utf-8" }],
     ["/app.js", { body: read("app.js"), type: "text/javascript; charset=utf-8" }],
+    ["/fonts/Vazirmatn-Regular.woff2", { body: read("fonts/Vazirmatn-Regular.woff2"), type: "font/woff2" }],
+    ["/fonts/Vazirmatn-Bold.woff2", { body: read("fonts/Vazirmatn-Bold.woff2"), type: "font/woff2" }],
   ]);
 }
 
@@ -649,6 +652,11 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       lastProgress: digest.lastProgress,
       lastRecordAt: digest.lastRecordAt,
       hasRunStart: digest.hasRunStart,
+      mode: digest.mode,
+      appVersion: digest.appVersion,
+      phases: digest.phases,
+      calibration: digest.calibration,
+      reputation: digest.reputation,
       errorEvents: digest.errors,
       slowestEvents: digest.slowest,
     });

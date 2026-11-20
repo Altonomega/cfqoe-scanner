@@ -40,7 +40,8 @@ import {
   xrayVersion,
   xrayInstallHint,
 } from "../platform/xray.js";
-import { createLogger, summarizeLogFile } from "../logging/logger.js";
+import { createLogger, summarizeLogFile, digestLines } from "../logging/logger.js";
+import { writeDebugBundle } from "../logging/bundle.js";
 import { emitRunStart, emitRunEnd } from "../logging/lifecycle.js";
 import { runScan } from "../scan.js";
 import { runHardScan, hasHardScanState } from "../hard-scan.js";
@@ -330,7 +331,7 @@ async function listPreviousResults({ layout }) {
     );
   else console.log(`\n${table(rows, ["Report", "Size", "Modified"])}`);
 }
-async function showDiagnostics({ layout }) {
+async function showDiagnostics({ layout, rl }) {
   const entries = fs
     .readdirSync(layout.logs, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".ndjson"))
@@ -347,6 +348,7 @@ async function showDiagnostics({ layout }) {
   console.log(
     `  Events: ${summary.total}  errors: ${summary.byLevel.error}  warnings: ${summary.byLevel.warn}`,
   );
+  digestLines(summary).forEach((line) => console.log(`  ${line}`));
   if (summary.errors.length > 0) {
     if (terminalWidth() < 75)
       summary.errors.forEach((error, index) =>
@@ -360,6 +362,27 @@ async function showDiagnostics({ layout }) {
         )}`,
       );
   } else console.log(`  ${color.green("No warnings or errors recorded.")}`);
+  // The bundle offer (Signal §3.6): one redacted JSON file with the
+  // digest, the full log, the report and the settings — the file a
+  // bug report gets attached with. Only in the interactive menu;
+  // the CLI spells it `cfqoe diagnose --bundle`.
+  if (rl) {
+    const answer = (
+      await rl.question(`\n  Export a debug bundle for this run? (y/N): `)
+    )
+      .trim()
+      .toLowerCase();
+    if (answer === "y" || answer === "yes") {
+      const bundlePath = writeDebugBundle({
+        layout,
+        logFile: path.join(layout.logs, entries[0].name),
+      });
+      console.log(`  ${color.green(`Debug bundle: ${bundlePath}`)}`);
+      console.log(
+        `  ${color.dim("Redacted — safe to attach to a bug report.")}`,
+      );
+    }
+  }
 }
 async function editSettings({ rl, layout, settings }) {
   const fields = [
