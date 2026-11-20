@@ -348,8 +348,9 @@ test("VLESS by reference only: the URI and UUID never appear in responses, error
     assert.equal(JSON.parse(shown.body).stored, true);
     assert.ok(!shown.body.includes(TEST_UUID));
 
-    // A rejected import (TCP transport) answers with the terminal's
-    // static wording — still no echo of the submitted link.
+    // A rejected import (TCP transport) answers with the web layer's
+    // static message — no echo of the submitted link, and none of the
+    // terminal parser's fragment-quoting wording either (R-13).
     const rejected = await rawRequest({
       port,
       method: "POST",
@@ -372,6 +373,54 @@ test("VLESS by reference only: the URI and UUID never appear in responses, error
     assert.ok(logText.includes("web.control.config-import"));
     assert.ok(!logText.includes(TEST_UUID));
     assert.ok(!logText.includes("vless://"));
+  } finally {
+    await api.stop("test");
+  }
+});
+
+test("import errors are static: submitted fragments never reflect into the error body (R-13)", async () => {
+  const { layout } = makeLayout();
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const post = (uri) =>
+      rawRequest({
+        port,
+        method: "POST",
+        path: "/api/config",
+        headers: mutation(cookie),
+        body: JSON.stringify({ uri }),
+      });
+
+    // The shared terminal parser quotes the offending fragment in two
+    // of its messages ("VLESS port is invalid: <port>", "Only
+    // WebSocket transport is supported for scanning, found: <type>").
+    // That wording is right for the terminal, but on this surface the
+    // fragments are request body — and request bodies never appear in
+    // error bodies. Both failures must answer with the one static
+    // web-layer message, markers nowhere in the response.
+    const STATIC_MESSAGE =
+      "The link could not be imported. Check that it is a complete VLESS WebSocket link.";
+
+    const badPort = await post(
+      `vless://${TEST_UUID}@edge.example.com:PORTMARKERZZZ?encryption=none&security=none&type=ws#x`,
+    );
+    assert.equal(badPort.status, 400);
+    assert.equal(JSON.parse(badPort.body).error, "invalid_config");
+    assert.equal(JSON.parse(badPort.body).message, STATIC_MESSAGE);
+    assert.ok(!badPort.body.includes("PORTMARKERZZZ"));
+
+    const badType = await post(
+      `vless://${TEST_UUID}@edge.example.com:443?encryption=none&security=none&type=typemarkerzzz#x`,
+    );
+    assert.equal(badType.status, 400);
+    assert.equal(JSON.parse(badType.body).error, "invalid_config");
+    assert.equal(JSON.parse(badType.body).message, STATIC_MESSAGE);
+    assert.ok(!badType.body.includes("typemarkerzzz"));
+
+    // A rejected import stores nothing.
+    const shown = await rawRequest({ port, path: "/api/config", headers: authed(cookie) });
+    assert.equal(JSON.parse(shown.body).stored, false);
   } finally {
     await api.stop("test");
   }

@@ -344,8 +344,12 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     }
     // The terminal import's exact code path (R-09): normalize, parse,
     // capability check, protected write, re-read and re-verify. The
-    // URI itself never enters a response or a log record — only the
-    // parser's static error wording and the safe descriptor do.
+    // URI itself never enters a response or a log record, and neither
+    // does the parser's error wording: two of its messages quote the
+    // submitted port/transport fragments, and request bodies never
+    // appear in error bodies (R-13) — so every failure here maps to
+    // one static web-layer message. The terminal surface keeps its
+    // detailed wording; only this handler flattens it.
     const normalized = normalizeVlessInput(body.uri);
     let descriptor;
     try {
@@ -355,8 +359,13 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       const stored = parseVlessUri(readSecretFile(layout.secretFile));
       assertWebsocketCapable(stored);
       descriptor = describeVless(stored);
-    } catch (error) {
-      return sendError(res, 400, "invalid_config", error.message);
+    } catch {
+      return sendError(
+        res,
+        400,
+        "invalid_config",
+        "The link could not be imported. Check that it is a complete VLESS WebSocket link.",
+      );
     }
     webLog.info("web.control.config-import", { descriptor });
     return sendJson(res, 200, { ok: true, descriptor });
