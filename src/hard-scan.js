@@ -1,1 +1,923 @@
-import e from"node:fs";import t from"node:path";import n from"node:readline";import{parseVlessUri as i,describeVless as s,assertWebsocketCapable as r}from"./config/vless.js";import{parseRangeList as a,sampleCandidates as o}from"./candidate/ipv4.js";import{buildRangePlan as l,nextRoundRobinCandidate as c,nextLegacyCandidate as d}from"./candidate/hard-order.js";import{collectCandidateBatch as u,runEligibilityBatch as g,runAdaptiveEligibilityBatch as p,selectDelayedRetries as f}from"./hard-scheduler.js";import{probeWebsocket as y}from"./probe/websocket.js";import{startXray as m}from"./xray/manager.js";import{locateXray as h}from"./platform/xray.js";import{loadCatalog as b,resolveWorkloads as w}from"./config/settings.js";import{probeBrowsing as x}from"./browsing/probe.js";import{probeStreaming as S}from"./streaming/probe.js";import{applyTunnelResults as I,buildEligibilitySummary as R,rankCandidates as v,renderTopList as M,REPORT_SCHEMA as k,GENERATOR_VERSION as j}from"./report.js";import{runLoadProbe as F}from"./probe/load.js";import{calibrateWebsocketConcurrency as P}from"./measurement/scan-calibration.js";export const HARD_STATE_VERSION=3;function T(e,t=1,n=64){const i=Math.floor(Number(e));return!Number.isFinite(i)||i<=0?t:Math.min(i,n)}function C(e){return 0===e.length?0:e.filter(e=>e.ok).length/e.length}function N(e,t){const n=e.eligibility.confidence95?.lower??0,i=t.eligibility.confidence95?.lower??0;if(i!==n)return i-n;if(t.eligibility.successRate!==e.eligibility.successRate)return t.eligibility.successRate-e.eligibility.successRate;const s=e.eligibility.handshakeMedianMs??Number.POSITIVE_INFINITY,r=t.eligibility.handshakeMedianMs??Number.POSITIVE_INFINITY;if(s!==r)return s-r;const a=e.eligibility.connectMedianMs??Number.POSITIVE_INFINITY,o=t.eligibility.connectMedianMs??Number.POSITIVE_INFINITY;return a!==o?a-o:e.ip.localeCompare(t.ip)}function B(e,t,n){const i=e.filter(e=>e.ip!==t.ip);return i.push(t),i.sort(N),i.slice(0,n)}function $(t,n){e.writeFileSync(t,`${JSON.stringify(n,null,2)}\n`,{mode:384})}function O(t,n){e.appendFileSync(t,`${JSON.stringify(n)}\n`,{mode:384})}function E(t){return e.existsSync(t.hardStateFile)}function Q(e,t){$(e.hardStateFile,t),$(t.files.archiveStateFile,t)}function D(t){try{e.rmSync(t.hardStateFile,{force:!0})}catch{}}function _(e){return e.version<3||Number.isInteger(e.cursor?.hostIndex)}function q(t){const n=_(t),i={runId:t.runId,status:t.status,scope:"run-relative",traversal:n?"legacy-range-sequential":"range-round-robin",execution:"parallel-batched",startedAt:t.startedAt,updatedAt:(new Date).toISOString(),progress:{tested:t.counts.tested,eligible:t.counts.eligible,failed:t.counts.failed,retryQueued:t.counts.retryQueued,retryRecovered:t.counts.retryRecovered,total:t.total,rangeIndex:t.cursor.rangeIndex,passIndex:n?null:t.cursor.passIndex,hostIndex:n?t.cursor.hostIndex:null},files:t.files,topEligibility:t.topEligibility};$(t.files.snapshotJson,i),e.writeFileSync(t.files.snapshotTxt,`${function(e,t=30){return[["IP","Success","Lower95","Confidence","HandshakeP50","POP","Range"].join("\t"),...e.slice(0,t).map(e=>[e.ip,`${Math.round(100*(e.eligibility.successRate||0))}%`,`${Math.round(100*(e.eligibility.confidence95?.lower||0))}%`,e.eligibility.confidence,e.eligibility.handshakeMedianMs??"-",e.eligibility.pops?.dominant||"-",e.range].join("\t"))].join("\n")}(t.topEligibility,t.settings.hard.liveTop)}\n`,{mode:384})}async function A({state:t,settings:i,vless:s,logger:r,onProgress:a}){if(!i.hard.delayedRetry)return[];const o=await async function(t,i){const s=[];if(!t||!e.existsSync(t))return s;const r=new Set,a=n.createInterface({input:e.createReadStream(t,"utf8"),crlfDelay:1/0});for await(const e of a){const t=e.trim();if(t)try{const e=JSON.parse(t);if(!e.ip||r.has(e.ip))continue;if(r.add(e.ip),s.push({ip:e.ip,range:e.range}),s.length>=i)break}catch{}}return s}(t.files.retryFile,T(i.hard.retryLimit,1e3,1e5));if(0===o.length)return[];const l=T(i.hard.concurrency,i.scan.concurrency);r.info("hard.retry.start",{candidates:o.length,concurrency:l});let c=0;const d=await g({candidates:o,rounds:T(i.scan.rounds,2,16),concurrency:l,minimumSuccessRate:i.scan.minimumSuccessRate,task:async e=>y({ip:e.ip,vless:s,timeoutMs:i.scan.timeoutMs}),onCandidateDone:({candidate:e,observations:t,finished:n,total:s})=>{C(t)>=i.scan.minimumSuccessRate&&(c+=1),a({phase:"hard-retry",completed:n,total:s,eligible:c,failed:n-c,currentRange:e.range,note:"delayed retry of transient failures"})}});return t.counts.retryRecovered=c,r.info("hard.retry.complete",{candidates:d.length,recovered:c}),d.filter(({observations:e})=>e.some(e=>e.ok)).map(({candidate:e,observations:t})=>R({ip:e.ip,range:e.range,eligibility:t,temporalBlocks:2}))}export function hasHardScanState(e){return E(e)}export async function runHardScan({vlessUri:J,settings:L,layout:V,logger:Y,onProgress:G=()=>{},runId:H,resume:z=!1}){const U=i(J);r(U);const K=s(U),W=a(e.readFileSync(V.rangesFile,"utf8")),X=l(W);let Z;if(z&&E(V))Z=function(e){return e.files.retryFile||(e.files.retryFile=e.files.eligibilityFile.replace(/\.eligibility\.ndjson$/,".retry.ndjson")),e.counts.retryQueued||(e.counts.retryQueued=0),e.counts.retryRecovered||(e.counts.retryRecovered=0),e}(function(t){return JSON.parse(e.readFileSync(t.hardStateFile,"utf8"))}(V)),Z.settings=L,Z.status="in_progress",Z.execution="parallel-batched",Z.traversal=_(Z)?"legacy-range-sequential":"range-round-robin";else{Z=function({layout:e,runId:n,settings:i,target:s,total:r,rangesCount:a}){const o=t.join(e.hardScanDir,`run-${n}`);return{version:3,runId:n,mode:"hard",traversal:"range-round-robin",execution:"parallel-batched",status:"in_progress",startedAt:(new Date).toISOString(),target:s,settings:i,total:r,rangesCount:a,cursor:{rangeIndex:0,passIndex:0},counts:{tested:0,eligible:0,failed:0,retryQueued:0,retryRecovered:0},files:{eligibilityFile:`${o}.eligibility.ndjson`,retryFile:`${o}.retry.ndjson`,snapshotJson:`${o}.partial.json`,snapshotTxt:`${o}.partial.txt`,archiveStateFile:`${o}.state.json`},topEligibility:[]}}({layout:V,runId:H,settings:L,target:K,total:X.total,rangesCount:W.length}),D(V);for(const t of Object.values(Z.files))try{e.rmSync(t,{force:!0})}catch{}}const ee=T(L.hard.concurrency,L.scan.concurrency),te=o({ranges:W,perRange:1,max:Math.max(4,ee),seed:404}),ne=await P({candidates:te,vless:U,calibration:L.calibration,requestedConcurrency:ee,timeoutMs:L.scan.timeoutMs});L={...L,hard:{...L.hard,concurrency:ne.selectedConcurrency},calibration:{...L.calibration,result:ne}},Z.settings=L;const ie=ne.selectedConcurrency,se=T(L.hard.screeningRounds,1,5);let re=!1;const ae=function(e){const t=()=>e("signal");process.on("SIGINT",t);let n=!1,i=!1,s=null;if(process.stdin.isTTY&&"function"==typeof process.stdin.setRawMode){i=Boolean(process.stdin.isRaw);try{process.stdin.setRawMode(!0),n=!0,process.stdin.resume(),s=t=>{("q"===String(t||"").trim().toLowerCase()||t&&3===t[0])&&e("keyboard")},process.stdin.on("data",s)}catch{n=!1}}return()=>{if(process.off("SIGINT",t),s&&process.stdin.off("data",s),n)try{process.stdin.setRawMode(i)}catch{}}}(()=>{re=!0}),oe=_(Z),le=oe?d:c;Y.info("hard.start",{runId:Z.runId,target:K,totalCandidates:X.total,ranges:W.length,traversal:oe?"legacy-range-sequential":"range-round-robin",execution:"parallel-batched",concurrency:ie,screeningRounds:se,delayedRetry:Boolean(L.hard.delayedRetry),resume:z});let ce=0;try{for(;!re;){const e=u({plan:X,cursor:Z.cursor,limit:ie,nextCandidate:le});if(0===e.length)break;let t=0,n=0;const i=await g({candidates:e,rounds:se,concurrency:ie,minimumSuccessRate:L.scan.minimumSuccessRate,task:async e=>y({ip:e.ip,vless:U,timeoutMs:L.scan.timeoutMs}),onCandidateDone:({candidate:e,observations:i,finished:s})=>{C(i)>=L.scan.minimumSuccessRate?t+=1:n+=1,G({phase:"hard-scan",completed:Z.counts.tested+s,total:Z.total,eligible:Z.counts.eligible+t,failed:Z.counts.failed+n,currentRange:e.range,note:oe?`legacy parallel resume x${ie}; Q or Ctrl+C to stop safely`:`parallel x${ie}; range pass ${e.hostIndex+1}; Q or Ctrl+C to stop safely`})}});if(L.hard.delayedRetry)for(const e of f(i,{maxRetries:ie}))O(Z.files.retryFile,{ip:e.ip,range:e.range}),Z.counts.retryQueued+=1;for(const{candidate:e,observations:t}of i){const n=R({ip:e.ip,range:e.range,eligibility:t});O(Z.files.eligibilityFile,n),Z.cursor=e.nextCursor,Z.counts.tested+=1,n.eligibility.successRate>=L.scan.minimumSuccessRate?Z.counts.eligible+=1:Z.counts.failed+=1,Z.topEligibility=B(Z.topEligibility,n,L.hard.liveTop),Y.debug("hard.eligibility",{ip:e.ip,range:e.range,eligibility:n.eligibility})}ce+=i.length,(ce>=L.hard.saveEvery||re)&&(Z.status=re?"paused":"in_progress",Q(V,Z),q(Z),ce=0)}Z.status=re?"paused":"completed",Q(V,Z),q(Z)}finally{ae()}const de=await async function(t,i){const s=[];if(!e.existsSync(t))return s;const r=n.createInterface({input:e.createReadStream(t,"utf8"),crlfDelay:1/0});for await(const e of r){const t=e.trim();if(t)try{const e=JSON.parse(t),n=s.find(t=>t.ip===e.ip);n&&s.splice(s.indexOf(n),1),s.push(e),s.sort(N),s.length>i&&(s.length=i)}catch{}}return s}(Z.files.eligibilityFile,L.hard.finalTop),ue=re?[]:await A({state:Z,settings:L,vless:U,logger:Y,onProgress:G}),ge=[...de.filter(e=>!ue.some(t=>t.ip===e.ip)),...ue].sort(N).slice(0,L.hard.finalTop),pe=await async function({candidates:e,settings:t,vless:n,logger:i,onProgress:s}){const r=Math.min(e.length,T(t.hard.recheckTop,20,200));if(0===r)return e;const a=e.slice(0,r).map(e=>({ip:e.ip,range:e.range})),o=T(t.hard.concurrency,t.scan.concurrency),l=!1!==t.verification?.enabled;let c=0,d=0;i.info("hard.verify.start",{candidates:a.length,method:l?"sprt":"fixed-rounds",concurrency:o});const u=({candidate:e,finished:t,total:n,decision:i})=>s({phase:"hard-verify",completed:t,total:n,eligible:c,failed:d,currentRange:e.range,note:i?`verifying finalists (${i})`:"verifying finalists"}),f=l?await p({candidates:a,concurrency:o,sprt:t.verification?.sprt,task:async e=>y({ip:e.ip,vless:n,timeoutMs:t.scan.timeoutMs}),onCandidateDone:e=>{"accept"===e.decision?c+=1:"reject"===e.decision&&(d+=1),u(e)}}):await g({candidates:a,rounds:t.scan.rounds,concurrency:o,minimumSuccessRate:t.scan.minimumSuccessRate,task:async e=>y({ip:e.ip,vless:n,timeoutMs:t.scan.timeoutMs}),onCandidateDone:e=>{C(e.observations)>=t.scan.minimumSuccessRate?c+=1:d+=1,u(e)}}),m=new Map(f.map(({candidate:e,observations:t,decision:n})=>{const i=R({ip:e.ip,range:e.range,eligibility:t,temporalBlocks:2});return i.verification={method:l?"sprt":"fixed-rounds",decision:n||"measured",rounds:t.length},[e.ip,i]}));return i.info("hard.verify.complete",{candidates:f.length,accepted:c,rejected:d}),e.map(e=>m.get(e.ip)||e).sort(N)}({candidates:ge,settings:L,vless:U,logger:Y,onProgress:G}),{xrayInfo:fe,tunnelResults:ye}=await async function({candidates:e,settings:t,layout:n,logger:i,vless:s,onProgress:r}){const a=new Map;let o={enabled:!1,path:null,reason:"disabled"};if(!t.tunnel.enabled||0===e.length)return{xrayInfo:o,tunnelResults:a};const l=h({configuredPath:t.tunnel.xrayPath,root:n.root});if(!l.found)return o={enabled:!1,path:null,reason:"xray_not_found"},i.warn("xray.missing",{searched:l.searched,mode:"hard"}),{xrayInfo:o,tunnelResults:a};o={enabled:!0,path:l.path,reason:null};const c=b(n.workloadsFile),d=t.browsing.enabled?w({settings:t,catalog:c,kind:"browsing"}):[],u=t.streaming.enabled?w({settings:t,catalog:c,kind:"streaming"}):[],g=e.filter(e=>(e.eligibility.confidence95?.lower??e.eligibility.successRate)>=0&&e.eligibility.successRate>=t.scan.minimumSuccessRate).slice(0,t.tunnel.limit),p=g.length*t.tunnel.rounds;let f=0;r({phase:"hard-finalize",completed:f,total:p,eligible:g.length,failed:0,note:"final QoE ranking"});for(const e of g){const n=[],o=[],c=[];for(let a=1;a<=t.tunnel.rounds;a+=1){let y=null;try{y=await m({xrayPath:l.path,vless:s,candidateIp:e.ip,startupTimeoutMs:t.tunnel.startupTimeoutMs,shutdownGraceMs:t.tunnel.shutdownGraceMs,logger:i});for(const e of d)n.push(await x({workload:e,proxy:y.socks,timeoutMs:t.browsing.timeoutMs,assetLimit:t.browsing.assetLimit,maxSockets:t.browsing.maxSockets,maxBytes:t.browsing.maxBytes,logger:i}));for(const e of u)o.push(await S({workload:e,proxy:y.socks,timeoutMs:t.streaming.timeoutMs,maxSegments:t.streaming.maxSegments,maxBytes:t.streaming.maxBytes,startupBufferSec:t.streaming.startupBufferSec,safetyFactor:t.streaming.safetyFactor,variantMode:t.streaming.variantMode,targetMbps:t.streaming.targetMbps,logger:i}));if(t.load?.enabled){const n=await F({proxy:y.socks,endpoints:t.load.endpoints,durationMs:t.load.durationMs,chunkBytes:t.load.chunkBytes,maxDownloadBytes:t.load.maxDownloadBytes,flows:t.load.flows,uploadBytes:t.load.uploadBytes,uploadFlows:t.load.uploadFlows,fanoutRequests:t.load.fanoutRequests,control:Boolean(t.load.control?.enabled),controlBytes:t.load.control?.bytes,idleSamples:t.load.idleSamples,timeoutMs:t.load.timeoutMs});c.push(n),i.info("hard.load.probe",{ip:e.ip,round:a,bytes:(n.downlink?.totalBytes||0)+(n.uplink?.totalBytes||0),sustainedMbps:n.downlink?.sustainedMbps??null,shapingRatio:n.downlink?.shapingRatio??null,loadedRttMs:n.latency?.loadedRttMs??null})}}catch(t){i.warn("hard.tunnel.failed",{ip:e.ip,round:a,error:t.message})}finally{await(y?.stop())}f+=1,r({phase:"hard-finalize",completed:f,total:p,eligible:g.length,failed:0,currentRange:e.range,note:e.ip})}a.set(e.ip,{browsing:n,streaming:o,load:c})}return{xrayInfo:o,tunnelResults:a}}({candidates:pe,settings:L,layout:V,logger:Y,vless:U,onProgress:G}),me={browsing:L.browsing.enabled,streaming:L.streaming.enabled,load:Boolean(L.load?.enabled)},he=pe.map(e=>{const t=I(e,ye.get(e.ip)||null,me,{gateOverrides:L.load?.gates,gateProfile:L.load?.gateProfile}),n=e.eligibility.successRate>=L.scan.minimumSuccessRate;return t.selection={...t.selection||{},eligibleForTunnel:n,tunnelTested:ye.has(e.ip),tunnelReason:ye.has(e.ip)?null:n?L.tunnel.enabled?fe.enabled?"outside-tunnel-limit":"xray_not_found"===fe.reason?"xray-not-found":"tunnel-disabled":"tunnel-disabled":"not-eligible"},t}),be=function({layout:n,state:i,target:s,settings:r,candidates:a,xrayInfo:o,canceled:l}){const c=v(a),d={schema:k,generator:"cfqoe-scanner",version:j,scoreLabel:"Experimental CFQoE Score",scope:"run-relative",mode:"hard",traversal:_(i)?"legacy-range-sequential":"range-round-robin",execution:"parallel-batched",runId:i.runId,startedAt:i.startedAt,finishedAt:(new Date).toISOString(),platform:`${process.platform}-${process.arch}`,canceled:l,target:s,settings:r,checkpoints:i.files,xray:o,totals:{tested:i.counts.tested,eligible:i.counts.eligible,failed:i.counts.failed,retryQueued:i.counts.retryQueued,retryRecovered:i.counts.retryRecovered,includedInReport:c.length,complete:c.filter(e=>"complete"===e.measurement?.status).length,highConfidence:c.filter(e=>"high"===e.eligibility.confidence).length,withBrowsing:c.filter(e=>null!==e.scores.browsing).length,withStreaming:c.filter(e=>null!==e.scores.streaming).length},results:c},u=t.join(n.results,`run-${i.runId}.json`),g=t.join(n.results,"latest.json"),p=t.join(n.results,"best-ips.txt");return $(u,d),$(g,d),e.writeFileSync(p,`${M(c)}\n`,{mode:384}),{jsonPath:u,latestPath:g,topPath:p,report:d,xray:o,eligibleCount:i.counts.eligible,runId:i.runId,canceled:l}}({layout:V,state:Z,target:K,settings:L,candidates:he,xrayInfo:fe,canceled:re});return Z.lastReport=be.jsonPath,Q(V,Z),re||D(V),Y.info("hard.complete",{runId:Z.runId,canceled:re,tested:Z.counts.tested,eligible:Z.counts.eligible,retryQueued:Z.counts.retryQueued,retryRecovered:Z.counts.retryRecovered,traversal:Z.traversal,execution:Z.execution,report:be.jsonPath}),be}
+import fs from "node:fs";
+import path from "node:path";
+import readline from "node:readline";
+import {
+  parseVlessUri,
+  describeVless,
+  assertWebsocketCapable,
+} from "./config/vless.js";
+import { parseRangeList, sampleCandidates } from "./candidate/ipv4.js";
+import {
+  buildRangePlan,
+  nextRoundRobinCandidate,
+  nextLegacyCandidate,
+} from "./candidate/hard-order.js";
+import {
+  collectCandidateBatch,
+  runEligibilityBatch,
+  runAdaptiveEligibilityBatch,
+  selectDelayedRetries,
+} from "./hard-scheduler.js";
+import { probeWebsocket } from "./probe/websocket.js";
+import { startXray } from "./xray/manager.js";
+import { locateXray } from "./platform/xray.js";
+import { loadCatalog, resolveWorkloads } from "./config/settings.js";
+import { probeBrowsing } from "./browsing/probe.js";
+import { probeStreaming } from "./streaming/probe.js";
+import {
+  applyTunnelResults,
+  buildEligibilitySummary,
+  rankCandidates,
+  renderTopList,
+  REPORT_SCHEMA,
+  GENERATOR_VERSION,
+} from "./report.js";
+import { runLoadProbe } from "./probe/load.js";
+import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
+export const HARD_STATE_VERSION = 3;
+function clampInt(value, fallback = 1, max = 64) {
+  const parsed = Math.floor(Number(value));
+  return !Number.isFinite(parsed) || parsed <= 0
+    ? fallback
+    : Math.min(parsed, max);
+}
+function successRate(observations) {
+  return 0 === observations.length
+    ? 0
+    : observations.filter((observation) => observation.ok).length /
+        observations.length;
+}
+function compareEligibility(left, right) {
+  const leftLower = left.eligibility.confidence95?.lower ?? 0,
+    rightLower = right.eligibility.confidence95?.lower ?? 0;
+  if (rightLower !== leftLower) return rightLower - leftLower;
+  if (right.eligibility.successRate !== left.eligibility.successRate)
+    return right.eligibility.successRate - left.eligibility.successRate;
+  const leftHandshake =
+      left.eligibility.handshakeMedianMs ?? Number.POSITIVE_INFINITY,
+    rightHandshake =
+      right.eligibility.handshakeMedianMs ?? Number.POSITIVE_INFINITY;
+  if (leftHandshake !== rightHandshake) return leftHandshake - rightHandshake;
+  const leftConnect =
+      left.eligibility.connectMedianMs ?? Number.POSITIVE_INFINITY,
+    rightConnect =
+      right.eligibility.connectMedianMs ?? Number.POSITIVE_INFINITY;
+  return leftConnect !== rightConnect
+    ? leftConnect - rightConnect
+    : left.ip.localeCompare(right.ip);
+}
+function insertTop(list, entry, limit) {
+  const next = list.filter((item) => item.ip !== entry.ip);
+  return (
+    next.push(entry),
+    next.sort(compareEligibility),
+    next.slice(0, limit)
+  );
+}
+function writeJsonFile(file, data) {
+  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, { mode: 384 });
+}
+function appendJsonLine(file, data) {
+  fs.appendFileSync(file, `${JSON.stringify(data)}\n`, { mode: 384 });
+}
+function stateExists(layout) {
+  return fs.existsSync(layout.hardStateFile);
+}
+function persistState(layout, state) {
+  (writeJsonFile(layout.hardStateFile, state),
+    writeJsonFile(state.files.archiveStateFile, state));
+}
+function removeStateFile(layout) {
+  try {
+    fs.rmSync(layout.hardStateFile, { force: !0 });
+  } catch {}
+}
+function isLegacyState(state) {
+  return state.version < 3 || Number.isInteger(state.cursor?.hostIndex);
+}
+function writeSnapshot(state) {
+  const legacy = isLegacyState(state),
+    snapshot = {
+      runId: state.runId,
+      status: state.status,
+      scope: "run-relative",
+      traversal: legacy ? "legacy-range-sequential" : "range-round-robin",
+      execution: "parallel-batched",
+      startedAt: state.startedAt,
+      updatedAt: new Date().toISOString(),
+      progress: {
+        tested: state.counts.tested,
+        eligible: state.counts.eligible,
+        failed: state.counts.failed,
+        retryQueued: state.counts.retryQueued,
+        retryRecovered: state.counts.retryRecovered,
+        total: state.total,
+        rangeIndex: state.cursor.rangeIndex,
+        passIndex: legacy ? null : state.cursor.passIndex,
+        hostIndex: legacy ? state.cursor.hostIndex : null,
+      },
+      files: state.files,
+      topEligibility: state.topEligibility,
+    };
+  (writeJsonFile(state.files.snapshotJson, snapshot),
+    fs.writeFileSync(
+      state.files.snapshotTxt,
+      `${(function (entries, limit = 30) {
+        return [
+          [
+            "IP",
+            "Success",
+            "Lower95",
+            "Confidence",
+            "HandshakeP50",
+            "POP",
+            "Range",
+          ].join("\t"),
+          ...entries
+            .slice(0, limit)
+            .map((entry) =>
+              [
+                entry.ip,
+                `${Math.round(100 * (entry.eligibility.successRate || 0))}%`,
+                `${Math.round(100 * (entry.eligibility.confidence95?.lower || 0))}%`,
+                entry.eligibility.confidence,
+                entry.eligibility.handshakeMedianMs ?? "-",
+                entry.eligibility.pops?.dominant || "-",
+                entry.range,
+              ].join("\t"),
+            ),
+        ].join("\n");
+      })(state.topEligibility, state.settings.hard.liveTop)}\n`,
+      { mode: 384 },
+    ));
+}
+async function runDelayedRetries({
+  state,
+  settings,
+  vless,
+  logger,
+  onProgress,
+}) {
+  if (!settings.hard.delayedRetry) return [];
+  const retryCandidates = await (async function (file, limit) {
+    const entries = [];
+    if (!file || !fs.existsSync(file)) return entries;
+    const seen = new Set(),
+      lines = readline.createInterface({
+        input: fs.createReadStream(file, "utf8"),
+        crlfDelay: 1 / 0,
+      });
+    for await (const line of lines) {
+      const text = line.trim();
+      if (text)
+        try {
+          const entry = JSON.parse(text);
+          if (!entry.ip || seen.has(entry.ip)) continue;
+          if (
+            (seen.add(entry.ip),
+            entries.push({ ip: entry.ip, range: entry.range }),
+            entries.length >= limit)
+          )
+            break;
+        } catch {}
+    }
+    return entries;
+  })(state.files.retryFile, clampInt(settings.hard.retryLimit, 1e3, 1e5));
+  if (0 === retryCandidates.length) return [];
+  const concurrency = clampInt(
+    settings.hard.concurrency,
+    settings.scan.concurrency,
+  );
+  logger.info("hard.retry.start", {
+    candidates: retryCandidates.length,
+    concurrency,
+  });
+  let recovered = 0;
+  const results = await runEligibilityBatch({
+    candidates: retryCandidates,
+    rounds: clampInt(settings.scan.rounds, 2, 16),
+    concurrency,
+    minimumSuccessRate: settings.scan.minimumSuccessRate,
+    task: async (candidate) =>
+      probeWebsocket({
+        ip: candidate.ip,
+        vless,
+        timeoutMs: settings.scan.timeoutMs,
+      }),
+    onCandidateDone: ({ candidate, observations, finished, total }) => {
+      (successRate(observations) >= settings.scan.minimumSuccessRate &&
+        (recovered += 1),
+        onProgress({
+          phase: "hard-retry",
+          completed: finished,
+          total,
+          eligible: recovered,
+          failed: finished - recovered,
+          currentRange: candidate.range,
+          note: "delayed retry of transient failures",
+        }));
+    },
+  });
+  return (
+    (state.counts.retryRecovered = recovered),
+    logger.info("hard.retry.complete", {
+      candidates: results.length,
+      recovered,
+    }),
+    results
+      .filter(({ observations }) =>
+        observations.some((observation) => observation.ok),
+      )
+      .map(({ candidate, observations }) =>
+        buildEligibilitySummary({
+          ip: candidate.ip,
+          range: candidate.range,
+          eligibility: observations,
+          temporalBlocks: 2,
+        }),
+      )
+  );
+}
+export function hasHardScanState(layout) {
+  return stateExists(layout);
+}
+export async function runHardScan({
+  vlessUri,
+  settings,
+  layout,
+  logger,
+  onProgress = () => {},
+  runId,
+  resume = !1,
+}) {
+  const vless = parseVlessUri(vlessUri);
+  assertWebsocketCapable(vless);
+  const target = describeVless(vless),
+    ranges = parseRangeList(fs.readFileSync(layout.rangesFile, "utf8")),
+    plan = buildRangePlan(ranges);
+  let state;
+  if (resume && stateExists(layout))
+    ((state = (function (loaded) {
+      return (
+        loaded.files.retryFile ||
+          (loaded.files.retryFile = loaded.files.eligibilityFile.replace(
+            /\.eligibility\.ndjson$/,
+            ".retry.ndjson",
+          )),
+        loaded.counts.retryQueued || (loaded.counts.retryQueued = 0),
+        loaded.counts.retryRecovered || (loaded.counts.retryRecovered = 0),
+        loaded
+      );
+    })(JSON.parse(fs.readFileSync(layout.hardStateFile, "utf8")))),
+      (state.settings = settings),
+      (state.status = "in_progress"),
+      (state.execution = "parallel-batched"),
+      (state.traversal = isLegacyState(state)
+        ? "legacy-range-sequential"
+        : "range-round-robin"));
+  else {
+    ((state = (function ({
+      layout,
+      runId,
+      settings,
+      target,
+      total,
+      rangesCount,
+    }) {
+      const basePath = path.join(layout.hardScanDir, `run-${runId}`);
+      return {
+        version: 3,
+        runId,
+        mode: "hard",
+        traversal: "range-round-robin",
+        execution: "parallel-batched",
+        status: "in_progress",
+        startedAt: new Date().toISOString(),
+        target,
+        settings,
+        total,
+        rangesCount,
+        cursor: { rangeIndex: 0, passIndex: 0 },
+        counts: {
+          tested: 0,
+          eligible: 0,
+          failed: 0,
+          retryQueued: 0,
+          retryRecovered: 0,
+        },
+        files: {
+          eligibilityFile: `${basePath}.eligibility.ndjson`,
+          retryFile: `${basePath}.retry.ndjson`,
+          snapshotJson: `${basePath}.partial.json`,
+          snapshotTxt: `${basePath}.partial.txt`,
+          archiveStateFile: `${basePath}.state.json`,
+        },
+        topEligibility: [],
+      };
+    })({
+      layout,
+      runId,
+      settings,
+      target,
+      total: plan.total,
+      rangesCount: ranges.length,
+    })),
+      removeStateFile(layout));
+    for (const file of Object.values(state.files))
+      try {
+        fs.rmSync(file, { force: !0 });
+      } catch {}
+  }
+  const requestedConcurrency = clampInt(
+      settings.hard.concurrency,
+      settings.scan.concurrency,
+    ),
+    calibrationCandidates = sampleCandidates({
+      ranges,
+      perRange: 1,
+      max: Math.max(4, requestedConcurrency),
+      seed: 404,
+    }),
+    calibration = await calibrateWebsocketConcurrency({
+      candidates: calibrationCandidates,
+      vless,
+      calibration: settings.calibration,
+      requestedConcurrency,
+      timeoutMs: settings.scan.timeoutMs,
+    });
+  ((settings = {
+    ...settings,
+    hard: { ...settings.hard, concurrency: calibration.selectedConcurrency },
+    calibration: { ...settings.calibration, result: calibration },
+  }),
+    (state.settings = settings));
+  const concurrency = calibration.selectedConcurrency,
+    screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5);
+  let canceled = !1;
+  const removeCancelWatcher = (function (onCancel) {
+      const onSignal = () => onCancel("signal");
+      process.on("SIGINT", onSignal);
+      let rawEnabled = !1,
+        previousRaw = !1,
+        onData = null;
+      if (
+        process.stdin.isTTY &&
+        "function" == typeof process.stdin.setRawMode
+      ) {
+        previousRaw = Boolean(process.stdin.isRaw);
+        try {
+          (process.stdin.setRawMode(!0),
+            (rawEnabled = !0),
+            process.stdin.resume(),
+            (onData = (chunk) => {
+              ("q" ===
+                String(chunk || "")
+                  .trim()
+                  .toLowerCase() ||
+                (chunk && 3 === chunk[0])) &&
+                onCancel("keyboard");
+            }),
+            process.stdin.on("data", onData));
+        } catch {
+          rawEnabled = !1;
+        }
+      }
+      return () => {
+        if (
+          (process.off("SIGINT", onSignal),
+          onData && process.stdin.off("data", onData),
+          rawEnabled)
+        )
+          try {
+            process.stdin.setRawMode(previousRaw);
+          } catch {}
+      };
+    })(() => {
+      canceled = !0;
+    }),
+    legacy = isLegacyState(state),
+    nextCandidate = legacy ? nextLegacyCandidate : nextRoundRobinCandidate;
+  logger.info("hard.start", {
+    runId: state.runId,
+    target,
+    totalCandidates: plan.total,
+    ranges: ranges.length,
+    traversal: legacy ? "legacy-range-sequential" : "range-round-robin",
+    execution: "parallel-batched",
+    concurrency,
+    screeningRounds,
+    delayedRetry: Boolean(settings.hard.delayedRetry),
+    resume,
+  });
+  let sinceSave = 0;
+  try {
+    for (; !canceled;) {
+      const batch = collectCandidateBatch({
+        plan,
+        cursor: state.cursor,
+        limit: concurrency,
+        nextCandidate,
+      });
+      if (0 === batch.length) break;
+      let batchEligible = 0,
+        batchFailed = 0;
+      const results = await runEligibilityBatch({
+        candidates: batch,
+        rounds: screeningRounds,
+        concurrency,
+        minimumSuccessRate: settings.scan.minimumSuccessRate,
+        task: async (candidate) =>
+          probeWebsocket({
+            ip: candidate.ip,
+            vless,
+            timeoutMs: settings.scan.timeoutMs,
+          }),
+        onCandidateDone: ({ candidate, observations, finished }) => {
+          (successRate(observations) >= settings.scan.minimumSuccessRate
+            ? (batchEligible += 1)
+            : (batchFailed += 1),
+            onProgress({
+              phase: "hard-scan",
+              completed: state.counts.tested + finished,
+              total: state.total,
+              eligible: state.counts.eligible + batchEligible,
+              failed: state.counts.failed + batchFailed,
+              currentRange: candidate.range,
+              note: legacy
+                ? `legacy parallel resume x${concurrency}; Q or Ctrl+C to stop safely`
+                : `parallel x${concurrency}; range pass ${candidate.hostIndex + 1}; Q or Ctrl+C to stop safely`,
+            }));
+        },
+      });
+      if (settings.hard.delayedRetry)
+        for (const retry of selectDelayedRetries(results, {
+          maxRetries: concurrency,
+        }))
+          (appendJsonLine(state.files.retryFile, {
+            ip: retry.ip,
+            range: retry.range,
+          }),
+            (state.counts.retryQueued += 1));
+      for (const { candidate, observations } of results) {
+        const summary = buildEligibilitySummary({
+          ip: candidate.ip,
+          range: candidate.range,
+          eligibility: observations,
+        });
+        (appendJsonLine(state.files.eligibilityFile, summary),
+          (state.cursor = candidate.nextCursor),
+          (state.counts.tested += 1),
+          summary.eligibility.successRate >= settings.scan.minimumSuccessRate
+            ? (state.counts.eligible += 1)
+            : (state.counts.failed += 1),
+          (state.topEligibility = insertTop(
+            state.topEligibility,
+            summary,
+            settings.hard.liveTop,
+          )),
+          logger.debug("hard.eligibility", {
+            ip: candidate.ip,
+            range: candidate.range,
+            eligibility: summary.eligibility,
+          }));
+      }
+      ((sinceSave += results.length),
+        (sinceSave >= settings.hard.saveEvery || canceled) &&
+          ((state.status = canceled ? "paused" : "in_progress"),
+          persistState(layout, state),
+          writeSnapshot(state),
+          (sinceSave = 0)));
+    }
+    ((state.status = canceled ? "paused" : "completed"),
+      persistState(layout, state),
+      writeSnapshot(state));
+  } finally {
+    removeCancelWatcher();
+  }
+  const topEligibility = await (async function (file, limit) {
+      const entries = [];
+      if (!fs.existsSync(file)) return entries;
+      const lines = readline.createInterface({
+        input: fs.createReadStream(file, "utf8"),
+        crlfDelay: 1 / 0,
+      });
+      for await (const line of lines) {
+        const text = line.trim();
+        if (text)
+          try {
+            const entry = JSON.parse(text),
+              existing = entries.find((item) => item.ip === entry.ip);
+            (existing && entries.splice(entries.indexOf(existing), 1),
+              entries.push(entry),
+              entries.sort(compareEligibility),
+              entries.length > limit && (entries.length = limit));
+          } catch {}
+      }
+      return entries;
+    })(state.files.eligibilityFile, settings.hard.finalTop),
+    retrySummaries = canceled
+      ? []
+      : await runDelayedRetries({ state, settings, vless, logger, onProgress }),
+    finalists = [
+      ...topEligibility.filter(
+        (entry) => !retrySummaries.some((summary) => summary.ip === entry.ip),
+      ),
+      ...retrySummaries,
+    ]
+      .sort(compareEligibility)
+      .slice(0, settings.hard.finalTop),
+    verified = await (async function ({
+      candidates,
+      settings,
+      vless,
+      logger,
+      onProgress,
+    }) {
+      const count = Math.min(
+        candidates.length,
+        clampInt(settings.hard.recheckTop, 20, 200),
+      );
+      if (0 === count) return candidates;
+      const finalists = candidates
+          .slice(0, count)
+          .map((entry) => ({ ip: entry.ip, range: entry.range })),
+        concurrency = clampInt(
+          settings.hard.concurrency,
+          settings.scan.concurrency,
+        ),
+        useSprt = !1 !== settings.verification?.enabled;
+      let accepted = 0,
+        rejected = 0;
+      logger.info("hard.verify.start", {
+        candidates: finalists.length,
+        method: useSprt ? "sprt" : "fixed-rounds",
+        concurrency,
+      });
+      const reportProgress = ({ candidate, finished, total, decision }) =>
+          onProgress({
+            phase: "hard-verify",
+            completed: finished,
+            total,
+            eligible: accepted,
+            failed: rejected,
+            currentRange: candidate.range,
+            note: decision
+              ? `verifying finalists (${decision})`
+              : "verifying finalists",
+          }),
+        results = useSprt
+          ? await runAdaptiveEligibilityBatch({
+              candidates: finalists,
+              concurrency,
+              sprt: settings.verification?.sprt,
+              task: async (candidate) =>
+                probeWebsocket({
+                  ip: candidate.ip,
+                  vless,
+                  timeoutMs: settings.scan.timeoutMs,
+                }),
+              onCandidateDone: (result) => {
+                ("accept" === result.decision
+                  ? (accepted += 1)
+                  : "reject" === result.decision && (rejected += 1),
+                  reportProgress(result));
+              },
+            })
+          : await runEligibilityBatch({
+              candidates: finalists,
+              rounds: settings.scan.rounds,
+              concurrency,
+              minimumSuccessRate: settings.scan.minimumSuccessRate,
+              task: async (candidate) =>
+                probeWebsocket({
+                  ip: candidate.ip,
+                  vless,
+                  timeoutMs: settings.scan.timeoutMs,
+                }),
+              onCandidateDone: (result) => {
+                (successRate(result.observations) >=
+                settings.scan.minimumSuccessRate
+                  ? (accepted += 1)
+                  : (rejected += 1),
+                  reportProgress(result));
+              },
+            }),
+        verifiedByIp = new Map(
+          results.map(({ candidate, observations, decision }) => {
+            const summary = buildEligibilitySummary({
+              ip: candidate.ip,
+              range: candidate.range,
+              eligibility: observations,
+              temporalBlocks: 2,
+            });
+            return (
+              (summary.verification = {
+                method: useSprt ? "sprt" : "fixed-rounds",
+                decision: decision || "measured",
+                rounds: observations.length,
+              }),
+              [candidate.ip, summary]
+            );
+          }),
+        );
+      return (
+        logger.info("hard.verify.complete", {
+          candidates: results.length,
+          accepted,
+          rejected,
+        }),
+        candidates
+          .map((entry) => verifiedByIp.get(entry.ip) || entry)
+          .sort(compareEligibility)
+      );
+    })({ candidates: finalists, settings, vless, logger, onProgress }),
+    { xrayInfo, tunnelResults } = await (async function ({
+      candidates,
+      settings,
+      layout,
+      logger,
+      vless,
+      onProgress,
+    }) {
+      const tunnelResults = new Map();
+      let xrayInfo = { enabled: !1, path: null, reason: "disabled" };
+      if (!settings.tunnel.enabled || 0 === candidates.length)
+        return { xrayInfo, tunnelResults };
+      const located = locateXray({
+        configuredPath: settings.tunnel.xrayPath,
+        root: layout.root,
+      });
+      if (!located.found)
+        return (
+          (xrayInfo = { enabled: !1, path: null, reason: "xray_not_found" }),
+          logger.warn("xray.missing", {
+            searched: located.searched,
+            mode: "hard",
+          }),
+          { xrayInfo, tunnelResults }
+        );
+      xrayInfo = { enabled: !0, path: located.path, reason: null };
+      const catalog = loadCatalog(layout.workloadsFile),
+        browsingWorkloads = settings.browsing.enabled
+          ? resolveWorkloads({ settings, catalog, kind: "browsing" })
+          : [],
+        streamingWorkloads = settings.streaming.enabled
+          ? resolveWorkloads({ settings, catalog, kind: "streaming" })
+          : [],
+        finalists = candidates
+          .filter(
+            (entry) =>
+              (entry.eligibility.confidence95?.lower ??
+                entry.eligibility.successRate) >= 0 &&
+              entry.eligibility.successRate >= settings.scan.minimumSuccessRate,
+          )
+          .slice(0, settings.tunnel.limit),
+        total = finalists.length * settings.tunnel.rounds;
+      let completed = 0;
+      onProgress({
+        phase: "hard-finalize",
+        completed,
+        total,
+        eligible: finalists.length,
+        failed: 0,
+        note: "final QoE ranking",
+      });
+      for (const candidate of finalists) {
+        const browsingResults = [],
+          streamingResults = [],
+          loadResults = [];
+        for (let round = 1; round <= settings.tunnel.rounds; round += 1) {
+          let xrayHandle = null;
+          try {
+            xrayHandle = await startXray({
+              xrayPath: located.path,
+              vless,
+              candidateIp: candidate.ip,
+              startupTimeoutMs: settings.tunnel.startupTimeoutMs,
+              shutdownGraceMs: settings.tunnel.shutdownGraceMs,
+              logger,
+            });
+            for (const workload of browsingWorkloads)
+              browsingResults.push(
+                await probeBrowsing({
+                  workload,
+                  proxy: xrayHandle.socks,
+                  timeoutMs: settings.browsing.timeoutMs,
+                  assetLimit: settings.browsing.assetLimit,
+                  maxSockets: settings.browsing.maxSockets,
+                  maxBytes: settings.browsing.maxBytes,
+                  logger,
+                }),
+              );
+            for (const workload of streamingWorkloads)
+              streamingResults.push(
+                await probeStreaming({
+                  workload,
+                  proxy: xrayHandle.socks,
+                  timeoutMs: settings.streaming.timeoutMs,
+                  maxSegments: settings.streaming.maxSegments,
+                  maxBytes: settings.streaming.maxBytes,
+                  startupBufferSec: settings.streaming.startupBufferSec,
+                  safetyFactor: settings.streaming.safetyFactor,
+                  variantMode: settings.streaming.variantMode,
+                  targetMbps: settings.streaming.targetMbps,
+                  logger,
+                }),
+              );
+            if (settings.load?.enabled) {
+              const loadResult = await runLoadProbe({
+                proxy: xrayHandle.socks,
+                endpoints: settings.load.endpoints,
+                durationMs: settings.load.durationMs,
+                chunkBytes: settings.load.chunkBytes,
+                maxDownloadBytes: settings.load.maxDownloadBytes,
+                flows: settings.load.flows,
+                uploadBytes: settings.load.uploadBytes,
+                uploadFlows: settings.load.uploadFlows,
+                fanoutRequests: settings.load.fanoutRequests,
+                control: Boolean(settings.load.control?.enabled),
+                controlBytes: settings.load.control?.bytes,
+                idleSamples: settings.load.idleSamples,
+                timeoutMs: settings.load.timeoutMs,
+              });
+              (loadResults.push(loadResult),
+                logger.info("hard.load.probe", {
+                  ip: candidate.ip,
+                  round,
+                  bytes:
+                    (loadResult.downlink?.totalBytes || 0) +
+                    (loadResult.uplink?.totalBytes || 0),
+                  sustainedMbps: loadResult.downlink?.sustainedMbps ?? null,
+                  shapingRatio: loadResult.downlink?.shapingRatio ?? null,
+                  loadedRttMs: loadResult.latency?.loadedRttMs ?? null,
+                }));
+            }
+          } catch (error) {
+            logger.warn("hard.tunnel.failed", {
+              ip: candidate.ip,
+              round,
+              error: error.message,
+            });
+          } finally {
+            await xrayHandle?.stop();
+          }
+          ((completed += 1),
+            onProgress({
+              phase: "hard-finalize",
+              completed,
+              total,
+              eligible: finalists.length,
+              failed: 0,
+              currentRange: candidate.range,
+              note: candidate.ip,
+            }));
+        }
+        tunnelResults.set(candidate.ip, {
+          browsing: browsingResults,
+          streaming: streamingResults,
+          load: loadResults,
+        });
+      }
+      return { xrayInfo, tunnelResults };
+    })({
+      candidates: verified,
+      settings,
+      layout,
+      logger,
+      vless,
+      onProgress,
+    }),
+    requirements = {
+      browsing: settings.browsing.enabled,
+      streaming: settings.streaming.enabled,
+      load: Boolean(settings.load?.enabled),
+    },
+    finalCandidates = verified.map((entry) => {
+      const summary = applyTunnelResults(
+          entry,
+          tunnelResults.get(entry.ip) || null,
+          requirements,
+          {
+            gateOverrides: settings.load?.gates,
+            gateProfile: settings.load?.gateProfile,
+          },
+        ),
+        eligibleForTunnel =
+          entry.eligibility.successRate >= settings.scan.minimumSuccessRate;
+      return (
+        (summary.selection = {
+          ...(summary.selection || {}),
+          eligibleForTunnel,
+          tunnelTested: tunnelResults.has(entry.ip),
+          tunnelReason: tunnelResults.has(entry.ip)
+            ? null
+            : eligibleForTunnel
+              ? settings.tunnel.enabled
+                ? xrayInfo.enabled
+                  ? "outside-tunnel-limit"
+                  : "xray_not_found" === xrayInfo.reason
+                    ? "xray-not-found"
+                    : "tunnel-disabled"
+                : "tunnel-disabled"
+              : "not-eligible",
+        }),
+        summary
+      );
+    }),
+    written = (function ({
+      layout,
+      state,
+      target,
+      settings,
+      candidates,
+      xrayInfo,
+      canceled,
+    }) {
+      const ranked = rankCandidates(candidates),
+        report = {
+          schema: REPORT_SCHEMA,
+          generator: "cfqoe-scanner",
+          version: GENERATOR_VERSION,
+          scoreLabel: "Experimental CFQoE Score",
+          scope: "run-relative",
+          mode: "hard",
+          traversal: isLegacyState(state)
+            ? "legacy-range-sequential"
+            : "range-round-robin",
+          execution: "parallel-batched",
+          runId: state.runId,
+          startedAt: state.startedAt,
+          finishedAt: new Date().toISOString(),
+          platform: `${process.platform}-${process.arch}`,
+          canceled,
+          target,
+          settings,
+          checkpoints: state.files,
+          xray: xrayInfo,
+          totals: {
+            tested: state.counts.tested,
+            eligible: state.counts.eligible,
+            failed: state.counts.failed,
+            retryQueued: state.counts.retryQueued,
+            retryRecovered: state.counts.retryRecovered,
+            includedInReport: ranked.length,
+            complete: ranked.filter(
+              (entry) => "complete" === entry.measurement?.status,
+            ).length,
+            highConfidence: ranked.filter(
+              (entry) => "high" === entry.eligibility.confidence,
+            ).length,
+            withBrowsing: ranked.filter(
+              (entry) => null !== entry.scores.browsing,
+            ).length,
+            withStreaming: ranked.filter(
+              (entry) => null !== entry.scores.streaming,
+            ).length,
+          },
+          results: ranked,
+        },
+        jsonPath = path.join(layout.results, `run-${state.runId}.json`),
+        latestPath = path.join(layout.results, "latest.json"),
+        topPath = path.join(layout.results, "best-ips.txt");
+      return (
+        writeJsonFile(jsonPath, report),
+        writeJsonFile(latestPath, report),
+        fs.writeFileSync(topPath, `${renderTopList(ranked)}\n`, { mode: 384 }),
+        {
+          jsonPath,
+          latestPath,
+          topPath,
+          report,
+          xray: xrayInfo,
+          eligibleCount: state.counts.eligible,
+          runId: state.runId,
+          canceled,
+        }
+      );
+    })({
+      layout,
+      state,
+      target,
+      settings,
+      candidates: finalCandidates,
+      xrayInfo,
+      canceled,
+    });
+  return (
+    (state.lastReport = written.jsonPath),
+    persistState(layout, state),
+    canceled || removeStateFile(layout),
+    logger.info("hard.complete", {
+      runId: state.runId,
+      canceled,
+      tested: state.counts.tested,
+      eligible: state.counts.eligible,
+      retryQueued: state.counts.retryQueued,
+      retryRecovered: state.counts.retryRecovered,
+      traversal: state.traversal,
+      execution: state.execution,
+      report: written.jsonPath,
+    }),
+    written
+  );
+}
