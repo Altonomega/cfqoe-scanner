@@ -28,6 +28,7 @@ import {
 } from "./report.js";
 import { resolveWorkloads, loadCatalog } from "./config/settings.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
+import { isAbortError } from "./measurement/abort.js";
 import { createProgressRecorder } from "./logging/logger.js";
 function successRate(observations) {
   return observations.length
@@ -86,17 +87,39 @@ export async function runScan({
       perRange: effectiveSettings.scan.perRange,
       max: effectiveSettings.scan.maxCandidates,
       seed,
-    }),
-    calibration = isCanceled()
-      ? null
-      : await calibrateWebsocketConcurrency({
-      candidates,
-      vless,
-      calibration: effectiveSettings.calibration,
-      requestedConcurrency: effectiveSettings.scan.concurrency,
-      timeoutMs: effectiveSettings.scan.timeoutMs,
-      seed,
     });
+  let calibration = null;
+  if (!isCanceled()) {
+    try {
+      calibration = await calibrateWebsocketConcurrency({
+        candidates,
+        vless,
+        calibration: effectiveSettings.calibration,
+        requestedConcurrency: effectiveSettings.scan.concurrency,
+        timeoutMs: effectiveSettings.scan.timeoutMs,
+        seed,
+        signal,
+        // Ladder positions ride the calibrating phase's own progress
+        // channel: completed/total become levels measured / ladder
+        // size, so the consoles count calibration instead of
+        // watching a silent minute.
+        onProgress: ({ completed, total, level }) =>
+          emitProgress({
+            phase: "calibrating",
+            completed,
+            total,
+            ...(level != null ? { level } : {}),
+          }),
+      });
+    } catch (error) {
+      // A stop that lands mid-calibration is not a calibration
+      // outcome: no verdict was measured, so — exactly as when the
+      // stop lands before calibration — none is applied or logged
+      // below, and the run ends canceled through the normal path.
+      if (!isAbortError(error) || !isCanceled()) throw error;
+      calibration = null;
+    }
+  }
   // A run canceled before calibration keeps the configured settings
   // verbatim: no verdict was measured, so none is applied or logged.
   effectiveSettings = calibration

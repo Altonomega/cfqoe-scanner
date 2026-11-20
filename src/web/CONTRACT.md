@@ -72,7 +72,15 @@ W3 should implement them as written or renegotiate here, in writing:
      screening round in flight) and `currentIp` (the candidate the
      newest progress event belongs to) alongside
      `completed/total/eligible/failed/elapsedMs`; both are null
-     outside the phases that know them. `log` frames carry `n`
+     outside the phases that know them. During the `calibrating`
+     phase, `completed/total` carry the calibration ladder position
+     (levels measured / levels in the ladder) once the ladder size
+     is known; before that they read 0/1. `trace` frames carry the
+     chromatogram points — one `[outcome, ms]` per real eligibility
+     probe behind the summaries the store receives: a success plots
+     its measured handshake, a failure is a `timeout`/`error` stub
+     with no invented figure, and a success with no measured
+     handshake is not plotted. `log` frames carry `n`
      (the record's requested/selected concurrency) when the record
      has one, so calibration verdicts — including the
      `*.calibration.no_control` degradation — can be narrated in

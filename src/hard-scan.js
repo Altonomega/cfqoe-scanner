@@ -40,6 +40,7 @@ import {
 import { runLoadProbe } from "./probe/load.js";
 import { createProgressRecorder } from "./logging/logger.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
+import { isAbortError } from "./measurement/abort.js";
 import {
   compareEligibilitySummaries,
   runBlockScreening,
@@ -343,8 +344,9 @@ export async function runHardScan({
   // terminal caller), nothing about the run changes.
   signal = null,
   // Optional observer for eligibility summaries as they are recorded
-  // (the web layer's genome tracker). Observer-only: it runs after
-  // the run's own bookkeeping and its return value is ignored.
+  // (the web layer's genome tracker). Called with the summary and the
+  // real observations behind it. Observer-only: it runs after the
+  // run's own bookkeeping and its return value is ignored.
   onSummary = null,
   // Test seam with the scheduler/engine task shape: when null (every
   // production caller) probing binds to the real websocket probe below.
@@ -503,13 +505,34 @@ export async function runHardScan({
       // the pool must be at least that deep or the cap is fiction here.
       max: Math.max(32, requestedConcurrency),
       seed: 404,
-    }),
+    });
+  // A stop that lands mid-calibration aborts it (the signal is
+  // threaded through the hunt and the ladder): no verdict was
+  // measured, so none is applied to settings or logged below — the
+  // run ends canceled exactly as if the stop had landed first.
+  let calibration = null;
+  try {
     calibration = await calibrateWebsocketConcurrency({
       candidates: calibrationCandidates,
       vless,
       calibration: settings.calibration,
       requestedConcurrency,
       timeoutMs: settings.scan.timeoutMs,
+      signal,
+      // Ladder positions ride the calibrating phase's own progress
+      // channel: completed/total become levels measured / ladder
+      // size, so the consoles count calibration instead of watching
+      // a silent minute.
+      onProgress: ({ completed, total, level }) =>
+        emitProgress(
+          {
+            phase: "calibrating",
+            completed,
+            total,
+            ...(level != null ? { level } : {}),
+          },
+          "calibrating",
+        ),
       ...(task
         ? {
             probeTask: ({ ip }) =>
@@ -522,38 +545,47 @@ export async function runHardScan({
           }
         : {}),
     });
-  ((settings = {
-    ...settings,
-    hard: { ...settings.hard, concurrency: calibration.selectedConcurrency },
-    calibration: { ...settings.calibration, result: calibration },
-  }),
-    (state.settings = settings));
-  emitProgress(
-    {
-      phase: "calibrating",
-      completed: 1,
-      total: 1,
-      note: `concurrency ${calibration.selectedConcurrency} selected`,
-    },
-    "calibrating",
-  );
-  // Same calibration verdict as the Full path records (scan.calibration):
-  // the selected concurrency and why, with per-level results.
-  logger.info("hard.calibration", {
-    requestedConcurrency: calibration.requestedConcurrency,
-    selectedConcurrency: calibration.selectedConcurrency,
-    reason: calibration.reason,
-    controlIp: calibration.controlIp ?? null,
-    levels: calibration.levels,
-  });
-  // Same no-control warning as the Full path: calibration no-ops and the
-  // sweep runs at the requested concurrency unmeasured.
-  if ("no_working_control" === calibration.reason)
-    logger.warn("hard.calibration.no_control", {
+  } catch (error) {
+    if (!isAbortError(error) || !(signal && signal.aborted)) throw error;
+    calibration = null;
+  }
+  // Only a measured calibration replaces the settings; an aborted one
+  // (null) keeps the configured settings verbatim.
+  if (calibration)
+    settings = {
+      ...settings,
+      hard: { ...settings.hard, concurrency: calibration.selectedConcurrency },
+      calibration: { ...settings.calibration, result: calibration },
+    };
+  state.settings = settings;
+  if (calibration) {
+    emitProgress(
+      {
+        phase: "calibrating",
+        completed: 1,
+        total: 1,
+        note: `concurrency ${calibration.selectedConcurrency} selected`,
+      },
+      "calibrating",
+    );
+    // Same calibration verdict as the Full path records (scan.calibration):
+    // the selected concurrency and why, with per-level results.
+    logger.info("hard.calibration", {
       requestedConcurrency: calibration.requestedConcurrency,
-      controlProbes: calibration.controlProbes ?? null,
+      selectedConcurrency: calibration.selectedConcurrency,
+      reason: calibration.reason,
+      controlIp: calibration.controlIp ?? null,
+      levels: calibration.levels,
     });
-  const concurrency = calibration.selectedConcurrency,
+    // Same no-control warning as the Full path: calibration no-ops and the
+    // sweep runs at the requested concurrency unmeasured.
+    if ("no_working_control" === calibration.reason)
+      logger.warn("hard.calibration.no_control", {
+        requestedConcurrency: calibration.requestedConcurrency,
+        controlProbes: calibration.controlProbes ?? null,
+      });
+  }
+  const concurrency = calibration ? calibration.selectedConcurrency : requestedConcurrency,
     screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5),
     blocksEngine = isBlocksState(state);
   let reputationStore = null,
@@ -678,9 +710,9 @@ export async function runHardScan({
         concurrency,
         reputation: reputationStore,
         initialBlockState,
-        onSummary: (summary) => {
+        onSummary: (summary, _candidate, observations) => {
           (appendJsonLine(state.files.eligibilityFile, summary),
-            onSummary?.(summary),
+            onSummary?.(summary, observations),
             (state.counts.tested += 1),
             summary.eligibility.successRate >= settings.scan.minimumSuccessRate
               ? (state.counts.eligible += 1)

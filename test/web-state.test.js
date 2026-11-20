@@ -110,3 +110,45 @@ test("defect 6a: log frames carry the calibration concurrency (n) for plain-word
   assert.equal(log.payload.event, "scan.calibration.no_control");
   assert.equal(log.payload.n, 24, "the speed the run continued at rides the frame");
 });
+
+test("trace: summaries hand the store real probe points — successes plot their measured handshake, failures invent nothing", async () => {
+  const state = makeState();
+  const frames = [];
+  state.addClient({ wantsTail: false, send: (type, payload) => frames.push({ type, payload }) });
+  state.beginRun({ mode: "hard", runId: "run-trace", settings: { hard: { engine: "round-robin" } } });
+  state.onSummary(
+    { ip: "203.0.113.9", range: "203.0.113.0/24", eligibility: { attempts: 4, successes: 2, successRate: 0.5 } },
+    [
+      { ok: true, handshakeMs: 123.6, error: null },
+      { ok: false, handshakeMs: null, error: "timeout" },
+      { ok: false, handshakeMs: null, error: "ECONNREFUSED" },
+      { ok: true, handshakeMs: null, error: null },
+    ],
+  );
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const trace = frames.filter((f) => f.type === "trace");
+  assert.equal(trace.length, 1, "one batched trace frame for the summary's probes");
+  assert.deepEqual(
+    trace[0].payload.points,
+    [["ok", 124], ["timeout", 0], ["error", 0]],
+    "probe order preserved; the unmeasured success plots nothing instead of an invented height",
+  );
+});
+
+test("trace: no observations, no points — and finishRun flushes the tail before the terminal run-state", () => {
+  const state = makeState();
+  const frames = [];
+  state.addClient({ wantsTail: false, send: (type, payload) => frames.push({ type, payload }) });
+  state.beginRun({ mode: "hard", runId: "run-trace-2", settings: { hard: { engine: "round-robin" } } });
+  state.onSummary({ ip: "203.0.113.10", range: "203.0.113.0/24", eligibility: { attempts: 1, successes: 1, successRate: 1 } });
+  state.onSummary(
+    { ip: "203.0.113.11", range: "203.0.113.0/24", eligibility: { attempts: 1, successes: 1, successRate: 1 } },
+    [{ ok: true, handshakeMs: 80, error: null }],
+  );
+  state.finishRun({ status: "complete", mode: "hard", runId: "run-trace-2", report: null });
+  const types = frames.map((f) => f.type);
+  const traceAt = types.indexOf("trace");
+  assert.ok(traceAt >= 0, "the buffered point was flushed at finish, without waiting for the timer");
+  assert.ok(traceAt < types.lastIndexOf("run-state"), "the trace lands before the terminal run-state");
+  assert.deepEqual(frames[traceAt].payload.points, [["ok", 80]]);
+});

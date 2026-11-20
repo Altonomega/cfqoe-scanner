@@ -94,7 +94,7 @@ export function createRunManager({ layout, state, webLog }) {
             resume: Boolean(resume),
             signal: controller.signal,
             onProgress,
-            onSummary: (summary) => state.onSummary(summary),
+            onSummary: (summary, observations) => state.onSummary(summary, observations),
           });
         } else {
           const profile =

@@ -31,3 +31,42 @@ test('calibration requires a control task and at least one level', async () => {
     /concurrency level/,
   );
 });
+
+test('calibration reports each measured level, in order, with the ladder size', async () => {
+  const events = [];
+  const result = await calibrateConcurrency({
+    levels: [1, 2, 4],
+    eventLoopLagLimitMs: 10000,
+    controlTask: async () => ({ ok: true, latencyMs: 100 }),
+    onProgress: (event) => events.push(event),
+  });
+  assert.equal(result.selectedConcurrency, 4);
+  assert.deepEqual(
+    events.map(({ completed, total, level }) => [completed, total, level]),
+    [
+      [1, 3, 1],
+      [2, 3, 2],
+      [3, 3, 4],
+    ],
+  );
+});
+
+test('an abort mid-level rejects with AbortError instead of waiting out the level', async () => {
+  const controller = new AbortController();
+  const slowProbe = () =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ ok: true, latencyMs: 100 }), 3000);
+      timer.unref?.();
+    });
+  const startedAt = Date.now();
+  const pending = calibrateConcurrency({
+    levels: [1, 2, 4],
+    eventLoopLagLimitMs: 10000,
+    controlTask: slowProbe,
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(pending, (error) => error.name === 'AbortError');
+  const elapsed = Date.now() - startedAt;
+  assert.ok(elapsed < 1500, `abort landed in ${elapsed}ms, not after the 3000ms probe`);
+});

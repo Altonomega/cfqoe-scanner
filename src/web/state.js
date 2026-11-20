@@ -31,10 +31,28 @@ import { VERSION } from "../version.js";
 const BLOCK_FLUSH_MS = 250;
 const COUNTER_FLUSH_MS = 1000;
 const LOG_FLUSH_MS = 500;
+const TRACE_FLUSH_MS = 250;
+const TRACE_BUFFER_LIMIT = 1000;
 const LOG_QUEUE_LIMIT = 200;
 const LOG_REPLAY_LIMIT = 200;
 const TICKER_LIMIT = 40;
 const TOP_LIMIT = 30;
+
+// One chromatogram point for one real probe observation, in the
+// client's [outcome, ms] shape: a success plots its measured
+// handshake (bar height grows as the handshake shrinks — the canvas's
+// "height = speed"); a failure is a timeout or an error stub and
+// carries no figure, because none was measured. A success without a
+// measured handshake plots nothing rather than an invented height.
+function tracePointFor(observation) {
+  if (!observation) return null;
+  if (observation.ok) {
+    return Number.isFinite(observation.handshakeMs)
+      ? ["ok", Math.round(observation.handshakeMs)]
+      : null;
+  }
+  return [/timeout/i.test(String(observation.error ?? "")) ? "timeout" : "error", 0];
+}
 
 function encodeBase64(bytes) {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
@@ -479,6 +497,10 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   let counterTimer = null;
   let logTimer = null;
   let countersDirty = false;
+  // Chromatogram points awaiting their flush, built only from real
+  // probe observations handed up with eligibility summaries.
+  let tracePoints = [];
+  let traceTimer = null;
 
   function nextSeq() {
     seq += 1;
@@ -536,6 +558,28 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     if (counterTimer) return;
     counterTimer = setTimeout(flushCounters, COUNTER_FLUSH_MS);
     if (typeof counterTimer.unref === "function") counterTimer.unref();
+  }
+
+  function flushTrace() {
+    traceTimer = null;
+    if (tracePoints.length === 0) return;
+    const points = tracePoints;
+    tracePoints = [];
+    emit("trace", { points });
+  }
+
+  function scheduleTrace() {
+    if (traceTimer) return;
+    traceTimer = setTimeout(flushTrace, TRACE_FLUSH_MS);
+    if (typeof traceTimer.unref === "function") traceTimer.unref();
+  }
+
+  function resetTrace() {
+    tracePoints = [];
+    if (traceTimer) {
+      clearTimeout(traceTimer);
+      traceTimer = null;
+    }
   }
 
   function pushTicker(text) {
@@ -711,6 +755,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     },
     beginRun({ mode, runId, settings }) {
       lastRun = null;
+      resetTrace();
       run = {
         mode,
         runId,
@@ -753,13 +798,28 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
       if (progress.note) pushTicker(progress.note);
       scheduleCounters();
     },
-    onSummary(summary) {
+    onSummary(summary, observations) {
       tracker.noteSummary(summary, run?.phase ?? null);
       if (run?.mode === "hard") {
         run.counters = { ...run.counters, ...tracker.counters() };
         scheduleCounters();
       }
       scheduleBlocks();
+      // The chromatogram feed: every observation behind this summary
+      // becomes one point, in probe order. Summaries that arrive
+      // without their observations (any caller that does not hand
+      // them up) feed nothing — the trace never plots an aggregate
+      // as if it were a probe.
+      if (run && Array.isArray(observations)) {
+        for (const observation of observations) {
+          const point = tracePointFor(observation);
+          if (point) tracePoints.push(point);
+        }
+        if (tracePoints.length > TRACE_BUFFER_LIMIT) {
+          tracePoints.splice(0, tracePoints.length - TRACE_BUFFER_LIMIT);
+        }
+        if (tracePoints.length > 0) scheduleTrace();
+      }
     },
     emitCandidate(row, lane) {
       emit("candidate", lane ? { row, lane } : { row });
@@ -784,6 +844,13 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
       }
       run = null;
       phaseStartedAt = null;
+      // The last probes of the run reach the chromatogram before the
+      // terminal run-state, like the final plate state below.
+      if (traceTimer) {
+        clearTimeout(traceTimer);
+        traceTimer = null;
+      }
+      flushTrace();
       // Final plate state (splits, finalists) goes out before the
       // terminal run-state, so the client's completion resync starts
       // from an already-correct genome.

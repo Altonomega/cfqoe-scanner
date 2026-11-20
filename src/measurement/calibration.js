@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { median, round } from '../stats.js';
+import { raceWithAbort, throwIfAborted } from './abort.js';
 
 function startLagMonitor(intervalMs = 10) {
   let expected = performance.now() + intervalMs;
@@ -25,6 +26,14 @@ export async function calibrateConcurrency({
   latencyInflationLimit = 0.1,
   failureRateIncreaseLimit = 0.1,
   eventLoopLagLimitMs = 50,
+  // Optional cancel token (AbortSignal-shaped): an abort fails the
+  // ladder with an AbortError — the in-flight level is abandoned, not
+  // awaited — so a stop lands within one probe timeout instead of
+  // after the whole ladder. Optional per-level observer: called after
+  // each measured level with { completed, total, level, accepted },
+  // the ladder position the consoles narrate.
+  signal = null,
+  onProgress = null,
 }) {
   if (typeof controlTask !== 'function') throw new Error('controlTask is required');
   const uniqueLevels = [...new Set(levels.map(Number).filter((value) => Number.isInteger(value) && value > 0))]
@@ -36,11 +45,20 @@ export async function calibrateConcurrency({
   let selected = uniqueLevels[0];
 
   for (const level of uniqueLevels) {
+    throwIfAborted(signal);
     const stopLag = startLagMonitor();
-    const observations = await Promise.all(
-      Array.from({ length: level }, (_value, index) => controlTask({ level, index })),
-    );
-    const eventLoopLagMs = stopLag();
+    let observations;
+    let eventLoopLagMs = 0;
+    try {
+      observations = await raceWithAbort(
+        Promise.all(
+          Array.from({ length: level }, (_value, index) => controlTask({ level, index })),
+        ),
+        signal,
+      );
+    } finally {
+      eventLoopLagMs = stopLag();
+    }
     const successful = observations.filter((item) => item?.ok);
     const latencyMs = median(successful.map((item) => item.latencyMs ?? item.handshakeMs ?? item.totalMs));
     const failureRate = observations.length ? 1 - successful.length / observations.length : 1;
@@ -63,6 +81,7 @@ export async function calibrateConcurrency({
       failureIncrease: round(failureIncrease, 4),
       eventLoopLagMs,
     });
+    onProgress?.({ completed: results.length, total: uniqueLevels.length, level, accepted });
 
     if (accepted) selected = level;
     else if (level !== uniqueLevels[0]) break;

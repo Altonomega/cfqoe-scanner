@@ -89,6 +89,7 @@ en: {
   "console.stopped": "Run stopped — the partial results are saved.", "console.journal": "Event journal",
   "console.idleHint": "No run is running. Start one here — its progress will appear on this page, live, as it happens.",
   "op.starting": "Starting the run…", "op.calibrating": "Calibrating — testing your path to choose a safe speed. On a slow path this can take up to a minute.",
+  "op.calibratingLevel": "Calibrating — testing speed level {done} of {total} on your path.",
   "op.screening": "Screening — round {round} of {rounds} · probing {ip} · {done} of {total} checks done",
   "op.screeningNoIp": "Screening — round {round} of {rounds} · {done} of {total} checks done",
   "op.delayed-retry": "Delayed retry — {total} silent candidates get one more chance · {done} of {total} done",
@@ -198,6 +199,7 @@ fa: {
   "console.stopped": "اجرا متوقف شد — نتایج جزئی ذخیره شدند.", "console.journal": "گزارش رویدادها",
   "console.idleHint": "هیچ اجرایی در حال انجام نیست. از همین‌جا شروع کنید — پیشرفتش زنده و لحظه‌به‌لحظه روی همین صفحه نمایش داده می‌شود.",
   "op.starting": "در حال شروع اجرا…", "op.calibrating": "کالیبراسیون — مسیر شما آزموده می‌شود تا سرعت امن انتخاب شود. در مسیرهای کند ممکن است تا یک دقیقه طول بکشد.",
+  "op.calibratingLevel": "کالیبراسیون — پلهٔ سرعت {done} از {total} روی مسیر شما آزموده می‌شود.",
   "op.screening": "غربال — دور {round} از {rounds} · در حال آزمودن {ip} · {done} از {total} بررسی انجام شده",
   "op.screeningNoIp": "غربال — دور {round} از {rounds} · {done} از {total} بررسی انجام شده",
   "op.delayed-retry": "تلاش مجدد با تأخیر — به {total} کاندیدای خاموش یک فرصت دیگر داده می‌شود · {done} از {total} انجام شده",
@@ -1028,7 +1030,7 @@ Views.scan = (el, parts) => {
     if (app.stopping) return t("ui.stopping");
     if (app.runStatus !== "running") return "";
     const c = app.counters, ph = app.phase, done = fmt(c.completed || 0), total = fmt(c.total || 0);
-    if (ph === "calibrating") return t("op.calibrating");
+    if (ph === "calibrating") return (c.total || 0) > 1 ? t("op.calibratingLevel", { done, total }) : t("op.calibrating");
     if (ph === "screening") return withIp(t(c.currentIp ? "op.screening" : "op.screeningNoIp", { round: c.round || 1, rounds: P.rounds, ip: "\u0001", done, total }), c.currentIp);
     if (ph === "delayed-retry") return t("op.delayed-retry", { done, total });
     if (ph === "verification") return t("op.verification", { done, total });
