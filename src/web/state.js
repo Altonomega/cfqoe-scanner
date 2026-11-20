@@ -462,6 +462,13 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   let seq = 0;
   const clients = new Set();
   let run = null; // { mode, runId, status, phase, startedAt, counters }
+  // The most recent finished run's terminal view. Without it the
+  // at-rest snapshot had nothing truthful to say about a scan-mode
+  // run that just ended (run = null read as "idle"), so the event
+  // stream and the snapshot disagreed about the same run — the
+  // banner-resurrection defect. Event, snapshot and API now all
+  // serve this same terminal status until a new run begins.
+  let lastRun = null; // { mode, runId, status, phase, startedAt, counters, error? }
   let phaseStartedAt = null;
   let tickerLines = [];
   let tickerWindow = [];
@@ -542,13 +549,20 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     emit("ticker", { text });
   }
 
-  function queueLog(record) {
-    const payload = {
+  function logPayload(record) {
+    return {
       time: record.time,
       level: record.level,
       event: record.event,
       msg: record.message ?? record.note ?? "",
+      // The one datum the narration needs from a log record: the
+      // concurrency a calibration verdict left the run at.
+      n: record.requestedConcurrency ?? record.selectedConcurrency ?? null,
     };
+  }
+
+  function queueLog(record) {
+    const payload = logPayload(record);
     for (const client of clients) {
       if (!client.wantsTail) continue;
       client.logQueue.push(payload);
@@ -627,8 +641,16 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   }
 
   // The at-rest run view: a paused Hard checkpoint is presented as a
-  // finished-but-resumable run (CONTRACT §1), everything else idle.
+  // finished-but-resumable run (CONTRACT §1); otherwise the last
+  // finished run's terminal view, so a stopped or failed scan run
+  // keeps its real status at rest instead of decaying to idle.
   function restRunView() {
+    const paused = pausedRunView();
+    if (paused) return paused;
+    return lastRun;
+  }
+
+  function pausedRunView() {
     const saved = tracker.checkpoint();
     if (!saved || saved.status !== "paused") return null;
     return {
@@ -663,16 +685,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
         );
         if (client.wantsTail && attachedLogger) {
           for (const record of attachedLogger.recent(LOG_REPLAY_LIMIT)) {
-            client.send(
-              "log",
-              {
-                time: record.time,
-                level: record.level,
-                event: record.event,
-                msg: record.message ?? record.note ?? "",
-              },
-              peekSeq(),
-            );
+            client.send("log", logPayload(record), peekSeq());
           }
         }
       } catch {
@@ -697,6 +710,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
       attachedLogger = null;
     },
     beginRun({ mode, runId, settings }) {
+      lastRun = null;
       run = {
         mode,
         runId,
@@ -728,6 +742,12 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
         eligible: progress.eligible ?? run.counters.eligible ?? 0,
         failed: progress.failed ?? run.counters.failed ?? 0,
         elapsedMs: progress.elapsedMs ?? run.counters.elapsedMs ?? 0,
+        // Narration fields: which screening round is in flight and
+        // which candidate the newest progress event belongs to, so
+        // the console can say what is happening right now instead of
+        // only how much is done. Absent outside the phases that know.
+        round: progress.round ?? run.counters.round ?? null,
+        currentIp: progress.ip ?? progress.item?.ip ?? run.counters.currentIp ?? null,
         ...(run.mode === "hard" ? tracker.counters() : {}),
       };
       if (progress.note) pushTicker(progress.note);
@@ -747,8 +767,17 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     ticker(text) {
       pushTicker(text);
     },
-    finishRun({ status, mode, runId, report }) {
+    finishRun({ status, mode, runId, report, error }) {
       if (report && mode === "hard") tracker.markFinalists(report.results);
+      lastRun = {
+        mode,
+        runId,
+        status,
+        phase: run?.phase ?? null,
+        startedAt: run?.startedAt ?? null,
+        counters: run?.counters ?? {},
+        ...(error ? { error } : {}),
+      };
       if (report) {
         latestCache = { key: null, value: null };
         readLatest();
@@ -760,7 +789,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
       // from an already-correct genome.
       const deltas = tracker.drainDirty();
       if (deltas.length > 0) emit("blocks", { deltas });
-      emit("run-state", { status, mode, runId });
+      emit("run-state", { status, mode, runId, ...(error ? { error } : {}) });
     },
     currentRunState() {
       const view = run ?? restRunView();
@@ -787,6 +816,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
               phase: view.phase,
               startedAt: view.startedAt,
               counters: view.mode === "hard" ? { ...view.counters, ...tracker.counters() } : view.counters,
+              ...(view.error ? { error: view.error } : {}),
               ...(view.mode === "hard" ? { genome, top: tracker.topList() } : {}),
             }
           : null,

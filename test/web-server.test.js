@@ -797,6 +797,113 @@ test("run lifecycle: start, 409 while active, strict event sequence, stop, pause
   }
 });
 
+test("scan-mode stop lifecycle: canceled event, snapshot agreement, second stop is a 400 (defect 7 regression)", async () => {
+  const blackholeSockets = new Set();
+  const blackhole = net.createServer((socket) => {
+    blackholeSockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => blackholeSockets.delete(socket));
+  });
+  await new Promise((resolve) => blackhole.listen(18444, "0.0.0.0", resolve));
+  const ranges = [];
+  for (let i = 0; i < 300; i += 1) ranges.push(`127.${(i >> 8) & 255}.${i & 255}.0/24`);
+  const { layout } = makeLayout({ rangesText: `${ranges.join("\n")}\n` });
+  writeSecretFile(
+    layout.secretFile,
+    `vless://${TEST_UUID}@edge.example.com:18444?encryption=none&security=none&type=ws&host=edge.example.com&path=%2Fws#test`,
+  );
+  const testSettings = loadSettings(layout.settingsFile);
+  testSettings.calibration.enabled = false;
+  testSettings.scan.timeoutMs = 400;
+  saveSettings(layout.settingsFile, testSettings);
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  const runStates = [];
+  let terminalResolve;
+  const terminalSeen = new Promise((resolve) => { terminalResolve = resolve; });
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const sse = http.get(
+      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie } },
+      (res) => {
+        let buffer = "";
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const type = /event: (\S+)/.exec(frame)?.[1];
+            const dataLine = /data: (.*)/s.exec(frame)?.[1];
+            if (!type || !dataLine) continue;
+            const payload = JSON.parse(dataLine);
+            if (type === "run-state") {
+              runStates.push(payload);
+              if (payload.status === "canceled") terminalResolve();
+            }
+          }
+        });
+      },
+    );
+    sse.on("error", () => {});
+
+    const started = await rawRequest({
+      port, method: "POST", path: "/api/run", headers: mutation(cookie),
+      body: JSON.stringify({ mode: "quick" }),
+    });
+    assert.equal(started.status, 200);
+    const { runId } = JSON.parse(started.body);
+    assert.ok(runId);
+
+    // The run is visibly alive before we stop it.
+    let alive = false;
+    for (let attempt = 0; attempt < 75 && !alive; attempt += 1) {
+      const parsed = JSON.parse((await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body);
+      if (parsed.run && parsed.run.status === "running") alive = true;
+      else await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(alive, "the quick run reaches running in the snapshot");
+
+    const stopped = await rawRequest({
+      port, method: "POST", path: "/api/run/stop", headers: mutation(cookie), body: "{}",
+    });
+    assert.equal(stopped.status, 200);
+    let deadline;
+    const timeout = new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("no canceled run-state within 60s")), 60000);
+    });
+    await Promise.race([terminalSeen, timeout]);
+    clearTimeout(deadline);
+    sse.destroy();
+
+    // THE regression pair: the terminal event and the snapshot must
+    // agree about the same run. The snapshot must not report
+    // "running" (the banner-resurrection defect), and must not
+    // erase the stop by decaying to null/idle either.
+    const after = JSON.parse((await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body);
+    assert.ok(after.run, "the stopped run keeps a terminal view at rest");
+    assert.equal(after.run.status, "canceled");
+    assert.equal(after.run.runId, runId);
+    assert.equal(after.run.mode, "quick");
+    const cancelAt = runStates.findIndex((e) => e.status === "canceled");
+    assert.ok(cancelAt >= 0);
+    assert.ok(
+      !runStates.slice(cancelAt + 1).some((e) => e.status === "running" && e.runId === runId),
+      "no running event for the same run after its terminal event",
+    );
+
+    // A second stop is a clean, explained refusal.
+    const secondStop = await rawRequest({
+      port, method: "POST", path: "/api/run/stop", headers: mutation(cookie), body: "{}",
+    });
+    assert.equal(secondStop.status, 400);
+    assert.equal(JSON.parse(secondStop.body).error, "no_active_run");
+  } finally {
+    await api.stop("test");
+    for (const socket of blackholeSockets) socket.destroy();
+    await new Promise((resolve) => blackhole.close(resolve));
+  }
+});
+
 test("run start refuses cleanly: no config is a 400 config_missing, a bogus mode a 400 bad_mode", async () => {
   const { layout } = makeLayout();
   const { api, port, bootstrapUrl } = await startServer(layout);
@@ -994,11 +1101,18 @@ test("run failure: a run whose engine throws ends in run-state failed, with run.
     assert.ok(runEnd, "run.end exists");
     assert.equal(runEnd.status, "failed");
 
-    // And the snapshot returns to the idle truth — no phantom run.
+    // And the snapshot agrees with the event: the failed run's
+    // terminal view, with its reason — never a phantom "running",
+    // never a silent decay to idle that erases the failure (0.9.1
+    // CONTRACT §9 terminal agreement).
     const after = JSON.parse(
       (await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body,
     );
-    assert.equal(after.run, null);
+    assert.equal(after.run.status, "failed");
+    assert.equal(after.run.runId, runId);
+    assert.equal(typeof after.run.error, "string");
+    assert.ok(after.run.error.length > 0, "the failure reason rides the snapshot");
+    assert.equal(typeof payload.error, "string", "the failure reason rides the terminal event too");
   } finally {
     await api.stop("test");
   }

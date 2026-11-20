@@ -56,23 +56,61 @@ test('the VLESS secret is never rendered: config view binds only descriptor fiel
   assert.ok(!/innerHTML[^;]*descriptor\.uri/.test(js) && !js.includes('d.uri'), 'no descriptor.uri rendering');
 });
 
-test('sim smoke: the fixed-seed Hard run spends its budget and expands blocks', { timeout: 180000 }, () => {
-  // The reproducible smoke (scripts/web-sim-smoke.mjs) is the only
-  // source of quotable sim numbers: fixed seeds (catalog 20261, run
-  // 404), scripted end-to-end. Two runs must print identical counters,
-  // and the expansion must be able to spend the full 72,000 budget —
-  // the structural caps that once held it to 27,731 are gone.
-  const script = fileURLToPath(new URL('../scripts/web-sim-smoke.mjs', import.meta.url));
-  const run = () => JSON.parse(execFileSync(process.execPath, [script], { encoding: 'utf8' }));
-  const a = run(), b = run();
-  assert.deepEqual(b, a, 'the fixed-seed smoke is deterministic');
-  assert.equal(a.primerProbes, 23091, 'primer spends 3 per block');
-  assert.equal(a.blocksPrimed, 7697, 'every block primed');
-  assert.equal(a.expansionStop, 'budget', 'expansion ends on the budget, not a structural cap');
-  assert.equal(a.probesSpent, 72000, 'the full budget is spent');
-  assert.ok(a.expansionWaves > 300, 'hundreds of real 120-probe waves: ' + a.expansionWaves);
-  assert.ok(a.blocksExpanded > 0, 'blocks actually expand (depth cap 32 is reachable)');
-  assert.ok(a.blocksSplit > 0, 'split-coverage still splits blocks');
+test('single source (0.9.1): no simulated feed ships in the product', () => {
+  // Mahan's ruling: the shipped UI has exactly one source — the real
+  // server. The sim source object, its run machines, the sim bar and
+  // its playback-speed selector, and the Diagnostics source switcher
+  // are gone; what remains is the offline state + retry.
+  const js = read('app.js'), html = read('index.html'), css = read('app.css');
+  assert.ok(!js.includes('__setSource'), 'no source-switch hook');
+  assert.ok(!/const Sim\s*=/.test(js), 'no Sim source object');
+  assert.ok(!js.includes('simDefaultSettings'), 'no sim settings factory');
+  assert.ok(!js.includes('"tick.'), 'no sim ticker strings');
+  assert.ok(!html.includes('sim-bar') && !js.includes('sim-bar'), 'no sim bar');
+  assert.ok(!js.includes('dg-sim') && !js.includes('dg-live'), 'no Diagnostics source switcher');
+  assert.ok(!js.includes('sim-speed'), 'no playback-speed selector');
+  assert.ok(!css.includes('.sim-bar') && !css.includes('.sim-speed'), 'no orphaned sim CSS');
+  assert.ok(js.includes('renderOffline') && js.includes('enterOffline'), 'the offline state ships instead');
+});
+
+test('0.9.1 wave markers: narration, stopping state, offline + failure strings in both languages', () => {
+  const js = read('app.js');
+  for (const marker of ['sc-journal', 'g-journal', 'ui.stopping', '_resyncSeq', 'calibration.no_control', 'ev.hard.calibration'])
+    assert.ok(js.includes(marker), 'marker present: ' + marker);
+  // Every string the wave added exists in BOTH tables (a key missing
+  // from fa would render the key name itself to a Persian user).
+  const keys = ['conn.none', 'run.stopping', 'run.here', 'note.canceled', 'note.noRun', 'note.noResume',
+    'note.settingsInvalid', 'console.failed', 'console.stopped', 'console.journal', 'err.unknown',
+    'ev.scan.calibration', 'ev.scan.calibration.no_control', 'ev.scan.calibration.no_control.plain',
+    'ev.hard.calibration', 'ev.hard.calibration.no_control', 'ev.hard.calibration.no_control.plain',
+    'dg.conn', 'dg.connLive', 'dg.connOff', 'dg.calibTruth', 'off.title', 'off.body', 'off.retry', 'off.still'];
+  for (const key of keys) {
+    const occurrences = js.split('"' + key + '":').length - 1;
+    assert.ok(occurrences >= 2, 'string key in both en and fa tables: ' + key + ' (found ' + occurrences + ')');
+  }
+});
+
+test('defect 9 pin: no file: URL can be constructed by the shipped assets', () => {
+  // Filesystem paths from the server are rendered as text, never as
+  // links; downloads flow through the authenticated /api/reports
+  // endpoints. The shipped assets must not even contain the scheme.
+  for (const name of ['app.js', 'index.html', 'app.css'])
+    assert.ok(!read(name).includes('file:'), 'no file: URL in ' + name);
+  const js = read('app.js');
+  assert.ok(js.includes('href="/api/reports/'), 'report downloads use the authenticated API');
+});
+
+test('defect 8 pin: the plate label reads the catalog cidr, never firstBlock as a string', () => {
+  const js = read('app.js');
+  assert.ok(js.includes('r.cidr.split("/")'), 'plateBlockCidr derives the base from the cidr string');
+  assert.ok(!js.includes('firstBlock.split'), 'firstBlock (a numeric index) is never split as a string');
+});
+
+test('defect 10 pin: the helix is drawn phase-shifted, never transform-squashed', () => {
+  const js = read('app.js'), css = read('app.css');
+  assert.ok(!css.includes('helixbreath'), 'the scaleY breath keyframes are gone');
+  assert.ok(js.includes('createElementNS'), 'the helix strands are real SVG elements');
+  assert.ok(js.includes('prefs.calm'), 'the helix motion obeys the calm gate');
 });
 
 test('size ratchet: the three assets stay a localhost-instant payload', () => {

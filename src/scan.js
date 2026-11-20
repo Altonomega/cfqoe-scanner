@@ -167,8 +167,8 @@ export async function runScan({
           observation
         );
       },
-      onProgress: ({ completed, total }) =>
-        emitProgress({ phase: "screening", completed, total }),
+      onProgress: ({ completed, total, round, item }) =>
+        emitProgress({ phase: "screening", completed, total, round, ip: item?.ip }),
     }),
     observationsByIp = new Map(
       screeningResults.map((result) => [result.item.ip, result.observations]),
@@ -201,8 +201,8 @@ export async function runScan({
             timeoutMs: effectiveSettings.scan.timeoutMs,
           }),
         isCanceled,
-        onCandidateDone: ({ finished, total }) =>
-          emitProgress({ phase: "delayed-retry", completed: finished, total }),
+        onCandidateDone: ({ finished, total, candidate }) =>
+          emitProgress({ phase: "delayed-retry", completed: finished, total, ip: candidate?.ip }),
       });
       for (const result of retryResults)
         observationsByIp.get(result.candidate.ip).push(...result.observations);
@@ -253,12 +253,13 @@ export async function runScan({
           timeoutMs: effectiveSettings.scan.timeoutMs,
         }),
       isCanceled,
-      onCandidateDone: ({ finished, total, decision }) =>
+      onCandidateDone: ({ finished, total, decision, candidate }) =>
         emitProgress({
           phase: "verification",
           completed: finished,
           total,
           note: decision,
+          ip: candidate?.ip,
         }),
     });
     for (const result of verificationResults)
@@ -421,6 +422,7 @@ export async function runScan({
               completed: completedCount,
               total: totalCount,
               note: `web transfer · ${candidate.ip}`,
+              ip: candidate.ip,
             });
             for (const workload of browsingWorkloads) {
               const browsingResult = await probeBrowsing({
@@ -454,6 +456,7 @@ export async function runScan({
               completed: completedCount,
               total: totalCount,
               note: `streaming · ${candidate.ip}`,
+              ip: candidate.ip,
             });
             for (const workload of streamingWorkloads) {
               const streamingResult = await probeStreaming({
@@ -493,6 +496,7 @@ export async function runScan({
                 completed: completedCount,
                 total: totalCount,
                 note: `real load · ${candidate.ip}`,
+              ip: candidate.ip,
               });
               const loadResult = await runLoadProbe({
                 proxy: xrayHandle.socks,

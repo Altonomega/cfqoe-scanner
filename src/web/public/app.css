@@ -113,15 +113,13 @@ a:hover { text-decoration: underline; }
 .btn.armed { background: var(--t); border-color: var(--t); color: var(--paper); font-weight: 600; }
 .btn[aria-pressed="true"] { border-color: var(--g); color: var(--ink); box-shadow: inset 0 0 0 1px var(--g); }
 
-.sim-bar {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 7px 20px; border-bottom: 2px solid var(--g);
-  background: var(--plate); font-size: 12.5px;
-}
-.sim-bar strong { font: 12px var(--mono); letter-spacing: 0.08em; color: var(--ink); }
-.sim-bar span { color: var(--ink-60); }
-.sim-speed { margin-left: auto; font: 12px var(--mono); color: var(--ink-60); }
-.sim-speed select { font: 12px var(--mono); margin-left: 4px; }
+/* live narration: the current-operation line and its pulse. The
+   pulse only ever says "a backend run is live" — it is chrome, not
+   data; calm / reduced-motion stills it like everything else. */
+.nowline { font-size: 15px; margin: 12px 0 2px; min-height: 22px; }
+.pulse { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--g); margin-inline-end: 8px; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+.journal { max-height: 196px; }
 
 .run-banner {
   display: flex; gap: 12px; align-items: baseline; padding: 7px 20px;
@@ -351,7 +349,7 @@ canvas.trace { margin-top: 10px; }
   .rail .station { border-left: none; border-top: 2px solid var(--rule); padding: 8px 4px 0; }
   .rail .station::before { left: 4px; top: -5px; }
   .inspector { left: 12px !important; right: 12px; width: auto; }
-  .sim-bar, .run-banner { padding-left: 12px; padding-right: 12px; }
+  .run-banner { padding-left: 12px; padding-right: 12px; }
 }
 
 /* ---------- bilingual: Persian + RTL ----------
@@ -384,7 +382,6 @@ bdi { unicode-bidi: isolate; }
 [dir="rtl"] .inspector .x { right: auto; left: 8px; }
 [dir="rtl"] table.data th { text-align: right; }
 [dir="rtl"] table.data td.num, [dir="rtl"] table.data th.num { text-align: left; }
-[dir="rtl"] .sim-speed { margin-left: 0; margin-right: auto; }
 [dir="rtl"] .chrome-right { margin-left: 0; margin-right: auto; }
 [dir="rtl"] #helix { margin-left: 0; margin-right: 8px; }
 .plate-frame, .ideo-wrap { direction: ltr; }
@@ -398,6 +395,8 @@ html[data-lang="fa"] .logtail .mono, html[data-lang="fa"] .ticker .mono { font-f
   [dir="rtl"] .rail .station::before { right: 4px; }
 }
 
-/* the one idle motion in the product: the header helix breathes */
-@keyframes helixbreath { from { transform: scaleY(0.9); } to { transform: scaleY(1.1); } }
-#helix { animation: helixbreath 5s ease-in-out infinite alternate; transform-origin: center; }
+/* the header helix carries no CSS animation: app.js redraws its
+   strands phase-shifted (a true rotation), so no transform ever
+   squashes the strokes or bleeds outside the box; the calm gate
+   (prefs.calm, the same one every JS motion checks) holds it
+   still. */

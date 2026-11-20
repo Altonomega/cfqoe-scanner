@@ -21,7 +21,11 @@ W3 should implement them as written or renegotiate here, in writing:
    `[index, 7, heat, quads, quadHeat]`.
 3. **Catalog.** `GET /api/catalog` →
    `{ ranges: [{ cidr, firstBlock, blocks }], blocksTotal, rangesTotal, addressesTotal }`
-   in `buildBlockPlan` order; `firstBlock` is the range's first /24.
+   in `buildBlockPlan` order. Field types are part of the contract:
+   `cidr` is the range's CIDR **string**; `firstBlock` is the numeric
+   **index** of the range's first block in catalog order (not an
+   address). Clients derive a block's /24 from `cidr` plus the
+   block's offset within the range.
 4. **Settings read + estimate.** `GET /api/settings` →
    `{ settings, catalog }` where `catalog` is the workloads catalog
    (`{ browsing: [{name, description}], streaming: [...] }`).
@@ -51,5 +55,29 @@ W3 should implement them as written or renegotiate here, in writing:
    rows. A client must not read an empty mid-run ledger as "no
    candidates found".
 
-Simulation mode (in `app.js`) implements this entire contract locally
-and is the reference for the shapes above.
+9. **One source of truth (0.9.1).** The shipped client has exactly
+   one data source: this server. There is no simulated feed and no
+   boot fallback — when the server is unreachable the client shows a
+   plain offline state with a retry action, and renders nothing else.
+   The page renders only the snapshot + event stream; it invents no
+   run state. Three consequences are contractual:
+   - **Terminal agreement.** `run-state` events, the snapshot's
+     `run` view, and `currentRunState` agree on a run's status at
+     all times. At rest, the snapshot serves the last finished run's
+     terminal view (`complete` / `canceled` / `failed`, with
+     `error` carrying the failure reason) until a new run begins;
+     a paused Hard checkpoint takes precedence as `paused-done`.
+     Scan-mode stops are `canceled`; Hard stops are `paused-done`.
+   - **Narration fields.** `counters` frames carry `round` (the
+     screening round in flight) and `currentIp` (the candidate the
+     newest progress event belongs to) alongside
+     `completed/total/eligible/failed/elapsedMs`; both are null
+     outside the phases that know them. `log` frames carry `n`
+     (the record's requested/selected concurrency) when the record
+     has one, so calibration verdicts — including the
+     `*.calibration.no_control` degradation — can be narrated in
+     plain words with the speed the run continued at.
+   - **No path links.** Filesystem paths from the server (log file
+     names, system rows, report metadata) are rendered as text,
+     never as links; downloads flow only through the authenticated
+     `/api/reports/:runId/...` endpoints above.
