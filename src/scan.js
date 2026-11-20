@@ -21,6 +21,7 @@ import { locateXray } from "./platform/xray.js";
 import { buildCandidateSummary, writeReport } from "./report.js";
 import { resolveWorkloads, loadCatalog } from "./config/settings.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
+import { createProgressRecorder } from "./logging/logger.js";
 function successRate(observations) {
   return observations.length
     ? observations.filter((observation) => observation.ok).length /
@@ -48,6 +49,16 @@ export async function runScan({
   const startedAt = new Date().toISOString(),
     vless = parseVlessUri(vlessUri);
   assertWebsocketCapable(vless);
+  // Every progress event is mirrored into the log as a scan.progress
+  // record (debug per event, info throttled) — one definition for the
+  // terminal and the file, so a frozen run stays reconstructable.
+  const recordProgress = createProgressRecorder(logger, {
+      event: "scan.progress",
+    }),
+    emitProgress = (event) => {
+      onProgress(event);
+      recordProgress(event);
+    };
   const target = describeVless(vless),
     seed = randomInt(0, 4294967296);
   let effectiveSettings = { ...settings, scan: { ...settings.scan, seed } };
@@ -91,7 +102,7 @@ export async function runScan({
     scoreLabel: "Experimental CFQoE Score",
   });
   const rounds = Math.max(1, effectiveSettings.scan.rounds || 1);
-  onProgress({
+  emitProgress({
     phase: "screening",
     completed: 0,
     total: candidates.length * rounds,
@@ -113,7 +124,7 @@ export async function runScan({
         );
       },
       onProgress: ({ completed, total }) =>
-        onProgress({ phase: "screening", completed, total }),
+        emitProgress({ phase: "screening", completed, total }),
     }),
     observationsByIp = new Map(
       screeningResults.map((result) => [result.item.ip, result.observations]),
@@ -142,7 +153,7 @@ export async function runScan({
             timeoutMs: effectiveSettings.scan.timeoutMs,
           }),
         onCandidateDone: ({ finished, total }) =>
-          onProgress({ phase: "delayed-retry", completed: finished, total }),
+          emitProgress({ phase: "delayed-retry", completed: finished, total }),
       });
       for (const result of retryResults)
         observationsByIp.get(result.candidate.ip).push(...result.observations);
@@ -189,7 +200,7 @@ export async function runScan({
           timeoutMs: effectiveSettings.scan.timeoutMs,
         }),
       onCandidateDone: ({ finished, total, decision }) =>
-        onProgress({
+        emitProgress({
           phase: "verification",
           completed: finished,
           total,
@@ -253,7 +264,7 @@ export async function runScan({
       let completedCount = 0;
       const totalCount =
         tunnelCandidates.length * effectiveSettings.tunnel.rounds;
-      onProgress({
+      emitProgress({
         phase: "tunnel",
         completed: completedCount,
         total: totalCount,
@@ -277,7 +288,7 @@ export async function runScan({
               shutdownGraceMs: effectiveSettings.tunnel.shutdownGraceMs,
               logger,
             });
-            onProgress({
+            emitProgress({
               phase: "tunnel",
               completed: completedCount,
               total: totalCount,
@@ -310,7 +321,7 @@ export async function runScan({
                   reason: browsingResult.error || "required metrics missing",
                 });
             }
-            onProgress({
+            emitProgress({
               phase: "tunnel",
               completed: completedCount,
               total: totalCount,
@@ -349,7 +360,7 @@ export async function runScan({
                 });
             }
             if (effectiveSettings.load?.enabled) {
-              onProgress({
+              emitProgress({
                 phase: "tunnel",
                 completed: completedCount,
                 total: totalCount,
@@ -418,7 +429,7 @@ export async function runScan({
             await xrayHandle?.stop();
           }
           completedCount += 1;
-          onProgress({
+          emitProgress({
             phase: "tunnel",
             completed: completedCount,
             total: totalCount,

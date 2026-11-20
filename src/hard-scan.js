@@ -34,6 +34,7 @@ import {
   GENERATOR_VERSION,
 } from "./report.js";
 import { runLoadProbe } from "./probe/load.js";
+import { createProgressRecorder } from "./logging/logger.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
 import {
   compareEligibilitySummaries,
@@ -328,6 +329,17 @@ export async function runHardScan({
 }) {
   const vless = parseVlessUri(vlessUri);
   assertWebsocketCapable(vless);
+  // Progress events are mirrored into the log as hard.progress records
+  // (debug per event, info throttled). UI events keep their raw phase
+  // strings; the caller names the checkpoint's phase vocabulary for
+  // the record, so log, checkpoint and UI agree about where the run is.
+  const recordProgress = createProgressRecorder(logger, {
+      event: "hard.progress",
+    }),
+    emitProgress = (event, logPhase = event.phase) => {
+      onProgress(event);
+      recordProgress({ ...event, phase: logPhase });
+    };
   const target = describeVless(vless),
     rangesText = fs.readFileSync(layout.rangesFile, "utf8"),
     ranges = parseRangeList(rangesText),
@@ -640,7 +652,8 @@ export async function runHardScan({
                 "hard-split-coverage" === event.phase
                   ? "hard-coverage"
                   : event.phase,
-            }));
+            }),
+            recordProgress({ ...event, phase: state.phase }));
         },
         logger,
         isCanceled: () => canceled,
@@ -691,17 +704,20 @@ export async function runHardScan({
           (successRate(observations) >= settings.scan.minimumSuccessRate
             ? (batchEligible += 1)
             : (batchFailed += 1),
-            onProgress({
-              phase: "hard-scan",
-              completed: state.counts.tested + finished,
-              total: state.total,
-              eligible: state.counts.eligible + batchEligible,
-              failed: state.counts.failed + batchFailed,
-              currentRange: candidate.range,
-              note: legacy
-                ? `legacy parallel resume x${concurrency}; Q or Ctrl+C to stop safely`
-                : `parallel x${concurrency}; range pass ${candidate.hostIndex + 1}; Q or Ctrl+C to stop safely`,
-            }));
+            emitProgress(
+              {
+                phase: "hard-scan",
+                completed: state.counts.tested + finished,
+                total: state.total,
+                eligible: state.counts.eligible + batchEligible,
+                failed: state.counts.failed + batchFailed,
+                currentRange: candidate.range,
+                note: legacy
+                  ? `legacy parallel resume x${concurrency}; Q or Ctrl+C to stop safely`
+                  : `parallel x${concurrency}; range pass ${candidate.hostIndex + 1}; Q or Ctrl+C to stop safely`,
+              },
+              "screening",
+            ));
         },
       });
       if (settings.hard.delayedRetry)
@@ -776,7 +792,7 @@ export async function runHardScan({
           state,
           settings,
           logger,
-          onProgress,
+          onProgress: (event) => emitProgress(event, "finalize"),
           task: probeTask,
         }),
     finalists = [
@@ -885,7 +901,12 @@ export async function runHardScan({
           .map((entry) => verifiedByIp.get(entry.ip) || entry)
           .sort(compareEligibilitySummaries)
       );
-    })({ candidates: finalists, settings, logger, onProgress }),
+    })({
+      candidates: finalists,
+      settings,
+      logger,
+      onProgress: (event) => emitProgress(event, "finalize"),
+    }),
     { xrayInfo, tunnelResults } = await (async function ({
       candidates,
       settings,
@@ -1040,7 +1061,7 @@ export async function runHardScan({
       layout,
       logger,
       vless,
-      onProgress,
+      onProgress: (event) => emitProgress(event, "finalize"),
     }),
     requirements = {
       browsing: settings.browsing.enabled,
