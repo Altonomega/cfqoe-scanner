@@ -29,6 +29,17 @@ function codedError(code, message, extra = {}) {
 export function createRunManager({ layout, state, webLog }) {
   let active = null;
 
+  // A refused control action is a material event in the run's story
+  // (Signal log audit, 0.9.1): before this, a rejected start or stop
+  // answered the client and left no trace in any log, so "the user
+  // pressed Start and nothing happened" was unreconstructible after
+  // the fact. One event name for every refusal the control plane
+  // issues: web.control.reject { action, reason, mode? } — the reason
+  // is the same code the client received.
+  function logReject(action, reason, extra = {}) {
+    webLog?.warn("web.control.reject", { action, reason, ...extra });
+  }
+
   function laneFor(row) {
     if (!row || typeof row.range !== "string") return undefined;
     try {
@@ -41,14 +52,20 @@ export function createRunManager({ layout, state, webLog }) {
   }
 
   async function start({ mode, resume = false }) {
-    if (!RUN_MODES.includes(mode)) throw codedError("bad_mode", "Unknown scan mode.");
+    if (!RUN_MODES.includes(mode)) {
+      logReject("run-start", "bad_mode", { mode: typeof mode === "string" ? mode : null });
+      throw codedError("bad_mode", "Unknown scan mode.");
+    }
     if (active) {
+      logReject("run-start", "run_active", { mode });
       throw codedError("run_active", "A scan is already running.", { runId: active.runId });
     }
     if (!fs.existsSync(layout.secretFile)) {
+      logReject("run-start", "config_missing", { mode });
       throw codedError("config_missing", "Import your VLESS configuration first.");
     }
     if (mode === "hard" && resume && !hasHardScanState(layout)) {
+      logReject("run-start", "no_resume", { mode });
       throw codedError("no_resume", "No paused hard scan was found.");
     }
 
@@ -172,7 +189,10 @@ export function createRunManager({ layout, state, webLog }) {
   }
 
   function stop() {
-    if (!active) throw codedError("no_active_run", "No scan is running.");
+    if (!active) {
+      logReject("run-stop", "no_active_run");
+      throw codedError("no_active_run", "No scan is running.");
+    }
     active.logger.info("web.control.scan-stop", { mode: active.mode, runId: active.runId });
     active.controller.abort();
     return { ok: true };

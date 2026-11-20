@@ -295,6 +295,7 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
   async function handleSettingsSave(req, res) {
     const body = await readJsonBody(req, BODY_CAP_SETTINGS);
     if (!isPlainObject(body.settings)) {
+      webLog.warn("web.control.reject", { action: "settings-save", reason: "invalid_settings" });
       return sendError(res, 400, "invalid_settings", "Settings must be a JSON object.");
     }
     const next = migrateSettings(body.settings);
@@ -363,6 +364,7 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       assertWebsocketCapable(stored);
       descriptor = describeVless(stored);
     } catch {
+      webLog.warn("web.control.reject", { action: "config-import", reason: "invalid_config" });
       return sendError(
         res,
         400,
@@ -377,6 +379,7 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
   async function handleConfigRemove(req, res) {
     await readJsonBody(req, BODY_CAP_SMALL);
     if (runs.isActive()) {
+      webLog.warn("web.control.reject", { action: "config-remove", reason: "run_active" });
       return sendError(res, 409, "run_active", "A scan is using the configuration.", {
         runId: runs.activeRunId(),
       });
@@ -416,6 +419,7 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
   async function handleServerStop(req, res) {
     await readJsonBody(req, BODY_CAP_SMALL);
     if (runs.isActive()) {
+      webLog.warn("web.control.reject", { action: "server-stop", reason: "run_active" });
       return sendError(res, 409, "run_active", "Stop the run first, or close it from the terminal.", {
         runId: runs.activeRunId(),
       });

@@ -58,6 +58,29 @@ test('schema v2: every record carries v, seq, elapsedMs, phase, runId', async ()
   assert.equal(records[3].phase, null);
 });
 
+test('envelope identity wins over detail keys: a detail runId can never shadow or redact the record runId', async () => {
+  const directory = tempDir();
+  const ownId = '99999999-8888-7777-6666-555555555555';
+  const otherId = '11111111-2222-3333-4444-555555555555';
+  const logger = createLogger({ level: 'debug', directory, quiet: true, runId: ownId });
+  // Call sites legitimately pass the run's id as a detail (scan.start,
+  // web.control.scan-start). The value is UUID-shaped, so redaction
+  // rewrites it — it must never replace the record's own identity,
+  // and spoofed envelope keys in details must never take over.
+  logger.info('scan.start', { runId: otherId, level: 'error', event: 'spoofed', seq: 42, otherRun: otherId, note: 'kept' });
+  await logger.close();
+
+  const records = readRecords(logger.filePath);
+  assert.equal(records.length, 1);
+  const [record] = records;
+  assert.equal(record.runId, ownId, 'record runId is the logger runId, verbatim');
+  assert.equal(record.level, 'info');
+  assert.equal(record.event, 'scan.start');
+  assert.equal(record.seq, 1);
+  assert.equal(record.otherRun, '[REDACTED_UUID]', 'detail values are still redacted');
+  assert.equal(record.note, 'kept');
+});
+
 test('setLevel re-levels a bootstrap logger after settings load', async () => {
   const directory = tempDir();
   const logger = createLogger({
