@@ -1,1 +1,287 @@
-import e from"node:fs";import t from"node:path";export const SETTINGS_VERSION=7;const a=1048576;export function createDefaultSettings(e=process.platform){const t="android"===e,s=t?6:12;return{version:7,mode:"full",scan:{perRange:3,maxCandidates:120,rounds:3,screeningRounds:1,concurrency:s,timeoutMs:6e3,minimumSuccessRate:.6,seed:404,delayedRetry:{enabled:!0,maxCandidates:t?30:60}},verification:{enabled:!0,limit:t?12:20,sprt:{p0:.6,p1:.9,alpha:.05,beta:.1,minRounds:2,maxRounds:16}},calibration:{enabled:!0,levels:t?[1,2,4,6]:[1,2,4,8,12,16],latencyInflationLimit:.1,failureRateIncreaseLimit:.02,eventLoopLagLimitMs:t?80:50},tunnel:{enabled:!0,xrayPath:"auto",limit:5,rounds:1,concurrency:1,startupTimeoutMs:8e3,shutdownGraceMs:1500},browsing:{enabled:!0,metricName:"Web Transfer Score",workloads:t?["cloudflare-docs"]:["cloudflare-docs","cdnjs"],assetLimit:t?8:10,timeoutMs:2e4,maxSockets:1,maxBytes:t?3*a:5*a,estimatedMaxBytes:t?3*a:5*a},streaming:{enabled:!0,workloads:["apple-advanced-hevc"],maxSegments:t?3:4,quickSegments:2,researchSegments:6,maxBytes:t?8*a:12*a,estimatedMaxBytes:t?8*a:12*a,startupBufferSec:4,safetyFactor:1.25,timeoutMs:3e4,variantMode:"fixed",targetMbps:6},load:{enabled:!0,durationMs:t?6e3:8e3,chunkBytes:1*a,maxDownloadBytes:t?8*a:12*a,flows:t?2:4,uploadBytes:t?524288:1*a,uploadFlows:1,fanoutRequests:t?3:4,idleSamples:2,timeoutMs:t?5e3:7e3,minBytes:t?4*a:8*a,gateProfile:"balanced",endpoints:{download:"https://speed.cloudflare.com/__down",upload:"https://speed.cloudflare.com/__up",ping:"https://speed.cloudflare.com/__down?bytes=1000",control:"https://ash-speed.hetzner.com/100MB.bin"},control:{enabled:!1,bytes:6*a},gates:{}},traffic:{targetBytesPerCandidate:t?20*a:30*a,hardWarningBytesPerCandidate:40*a},hard:{concurrency:s,screeningRounds:1,recheckTop:t?12:20,saveEvery:t?10:25,liveTop:30,finalTop:200,delayedRetry:!0,retryLimit:t?1e3:5e3},customWorkloads:{browsing:[],streaming:[]},logging:{level:"info"}}}export const DEFAULT_SETTINGS=createDefaultSettings();function s(e){return Boolean(e)&&"object"==typeof e&&!Array.isArray(e)}export function mergeSettings(e,t){const a=Array.isArray(e)?e.slice():{...e};if(!s(t))return a;for(const[e,o]of Object.entries(t))s(o)&&s(a[e])?a[e]=mergeSettings(a[e],o):a[e]=o;return a}const o=[["streaming","maxSegments",10],["streaming","quickSegments",3],["streaming","timeoutMs",25e3],["browsing","assetLimit",6],["browsing","timeoutMs",15e3]],n=[["browsing",["wikipedia"]],["streaming",["apple-bipbop"]]];function r(e,t){return Array.isArray(e)&&Array.isArray(t)&&e.length===t.length&&e.every((e,a)=>e===t[a])}export function migrateSettings(e,t=process.platform){if(!s(e))return createDefaultSettings(t);const i=createDefaultSettings(t),d=Number(e.version)||1;if(d>=7)return mergeSettings(i,e);const m=mergeSettings(i,e);for(const[t,a,s]of o)e[t]&&e[t][a]===s&&(m[t][a]=i[t][a]);for(const[t,a]of n)e[t]&&r(e[t].workloads,a)&&(m[t].workloads=i[t].workloads);const l=s(e.load)&&s(e.load.gates)?e.load.gates:{};if(d<4?m.load=mergeSettings(i.load,{gates:l}):d<6&&(m.load=mergeSettings(m.load,{maxDownloadBytes:i.load.maxDownloadBytes,durationMs:Math.min(Number(m.load.durationMs)||i.load.durationMs,i.load.durationMs),uploadBytes:Math.min(Number(m.load.uploadBytes)||i.load.uploadBytes,i.load.uploadBytes),fanoutRequests:Math.min(Number(m.load.fanoutRequests)||i.load.fanoutRequests,i.load.fanoutRequests)}),m.streaming.maxSegments=Math.min(Number(m.streaming.maxSegments)||i.streaming.maxSegments,i.streaming.maxSegments),m.browsing.assetLimit=Math.min(Number(m.browsing.assetLimit)||i.browsing.assetLimit,i.browsing.assetLimit)),d<6&&(m.browsing.maxBytes=Number(e.browsing?.maxBytes)||Number(e.browsing?.estimatedMaxBytes)||i.browsing.maxBytes,m.streaming.maxBytes=Number(e.streaming?.maxBytes)||Number(e.streaming?.estimatedMaxBytes)||i.streaming.maxBytes,"abr"===m.streaming.variantMode&&(m.streaming.variantMode="lowest")),d<7){const s="android"===t,o={durationMs:s?1e4:12e3,maxDownloadBytes:s?12*a:24*a,flows:s?3:6,uploadBytes:s?1*a:2*a,uploadFlows:2,fanoutRequests:s?4:6,idleSamples:4,timeoutMs:2e4,minBytes:s?6*a:12*a};for(const[t,a]of Object.entries(o))e.load?.[t]===a&&(m.load[t]=i.load[t])}return m.version=7,m.migratedFrom=d,m}export function loadSettings(t){try{return migrateSettings(JSON.parse(e.readFileSync(t,"utf8")))}catch{return mergeSettings(DEFAULT_SETTINGS,{})}}export function saveSettings(a,s){return e.mkdirSync(t.dirname(a),{recursive:!0}),e.writeFileSync(a,`${JSON.stringify(s,null,2)}\n`,{mode:384}),a}export function estimateTrafficBytes(e){const t=e.load||{},s=e.streaming||{},o=e.browsing||{},n=!1===t.enabled,r=n?0:Number(t.maxDownloadBytes)||24*a,i=n?0:Number(t.uploadBytes)||0,d=n?0:128*(Number(t.fanoutRequests)||0)*1024,m=n||!t.control?.enabled?0:Number(t.control.bytes)||0,l=!1===s.enabled?0:Number(s.maxBytes??s.estimatedMaxBytes)||0,u=!1===o.enabled?0:Number(o.maxBytes??o.estimatedMaxBytes)||0;return Math.round(r+i+d+m+l+u)}export function resolveWorkloads({settings:e,catalog:t,kind:a}){const s=e[a]?.workloads||[],o=e.customWorkloads?.[a]||[];return[...(t[a]||[]).filter(e=>s.includes(e.name)),...o]}export function loadCatalog(t){return JSON.parse(e.readFileSync(t,"utf8"))}
+import fs from "node:fs";
+import path from "node:path";
+export const SETTINGS_VERSION = 7;
+// Bytes in one mebibyte; most byte budgets below are expressed in MiB.
+const MIB = 1048576;
+export function createDefaultSettings(platform = process.platform) {
+  const isAndroid = "android" === platform,
+    concurrency = isAndroid ? 6 : 12;
+  return {
+    version: 7,
+    mode: "full",
+    scan: {
+      perRange: 3,
+      maxCandidates: 120,
+      rounds: 3,
+      screeningRounds: 1,
+      concurrency,
+      timeoutMs: 6e3,
+      minimumSuccessRate: 0.6,
+      seed: 404,
+      delayedRetry: { enabled: true, maxCandidates: isAndroid ? 30 : 60 },
+    },
+    verification: {
+      enabled: true,
+      limit: isAndroid ? 12 : 20,
+      sprt: {
+        p0: 0.6,
+        p1: 0.9,
+        alpha: 0.05,
+        beta: 0.1,
+        minRounds: 2,
+        maxRounds: 16,
+      },
+    },
+    calibration: {
+      enabled: true,
+      levels: isAndroid ? [1, 2, 4, 6] : [1, 2, 4, 8, 12, 16],
+      latencyInflationLimit: 0.1,
+      failureRateIncreaseLimit: 0.02,
+      eventLoopLagLimitMs: isAndroid ? 80 : 50,
+    },
+    tunnel: {
+      enabled: true,
+      xrayPath: "auto",
+      limit: 5,
+      rounds: 1,
+      concurrency: 1,
+      startupTimeoutMs: 8e3,
+      shutdownGraceMs: 1500,
+    },
+    browsing: {
+      enabled: true,
+      metricName: "Web Transfer Score",
+      workloads: isAndroid
+        ? ["cloudflare-docs"]
+        : ["cloudflare-docs", "cdnjs"],
+      assetLimit: isAndroid ? 8 : 10,
+      timeoutMs: 2e4,
+      maxSockets: 1,
+      maxBytes: isAndroid ? 3 * MIB : 5 * MIB,
+      estimatedMaxBytes: isAndroid ? 3 * MIB : 5 * MIB,
+    },
+    streaming: {
+      enabled: true,
+      workloads: ["apple-advanced-hevc"],
+      maxSegments: isAndroid ? 3 : 4,
+      quickSegments: 2,
+      researchSegments: 6,
+      maxBytes: isAndroid ? 8 * MIB : 12 * MIB,
+      estimatedMaxBytes: isAndroid ? 8 * MIB : 12 * MIB,
+      startupBufferSec: 4,
+      safetyFactor: 1.25,
+      timeoutMs: 3e4,
+      variantMode: "fixed",
+      targetMbps: 6,
+    },
+    load: {
+      enabled: true,
+      durationMs: isAndroid ? 6e3 : 8e3,
+      chunkBytes: 1 * MIB,
+      maxDownloadBytes: isAndroid ? 8 * MIB : 12 * MIB,
+      flows: isAndroid ? 2 : 4,
+      uploadBytes: isAndroid ? 524288 : 1 * MIB,
+      uploadFlows: 1,
+      fanoutRequests: isAndroid ? 3 : 4,
+      idleSamples: 2,
+      timeoutMs: isAndroid ? 5e3 : 7e3,
+      minBytes: isAndroid ? 4 * MIB : 8 * MIB,
+      gateProfile: "balanced",
+      endpoints: {
+        download: "https://speed.cloudflare.com/__down",
+        upload: "https://speed.cloudflare.com/__up",
+        ping: "https://speed.cloudflare.com/__down?bytes=1000",
+        control: "https://ash-speed.hetzner.com/100MB.bin",
+      },
+      control: { enabled: false, bytes: 6 * MIB },
+      gates: {},
+    },
+    traffic: {
+      targetBytesPerCandidate: isAndroid ? 20 * MIB : 30 * MIB,
+      hardWarningBytesPerCandidate: 40 * MIB,
+    },
+    hard: {
+      concurrency,
+      screeningRounds: 1,
+      recheckTop: isAndroid ? 12 : 20,
+      saveEvery: isAndroid ? 10 : 25,
+      liveTop: 30,
+      finalTop: 200,
+      delayedRetry: true,
+      retryLimit: isAndroid ? 1e3 : 5e3,
+    },
+    customWorkloads: { browsing: [], streaming: [] },
+    logging: { level: "info" },
+  };
+}
+export const DEFAULT_SETTINGS = createDefaultSettings();
+function isPlainObject(value) {
+  return Boolean(value) && "object" == typeof value && !Array.isArray(value);
+}
+export function mergeSettings(base, overrides) {
+  const result = Array.isArray(base) ? base.slice() : { ...base };
+  if (!isPlainObject(overrides)) return result;
+  for (const [key, value] of Object.entries(overrides))
+    if (isPlainObject(value) && isPlainObject(result[key]))
+      result[key] = mergeSettings(result[key], value);
+    else result[key] = value;
+  return result;
+}
+// Pre-v7 default values for individual keys: a stored value that still equals
+// the old default is upgraded to the current default; user changes are kept.
+const OLD_SCALAR_DEFAULTS = [
+    ["streaming", "maxSegments", 10],
+    ["streaming", "quickSegments", 3],
+    ["streaming", "timeoutMs", 25e3],
+    ["browsing", "assetLimit", 6],
+    ["browsing", "timeoutMs", 15e3],
+  ],
+  OLD_WORKLOAD_DEFAULTS = [
+    ["browsing", ["wikipedia"]],
+    ["streaming", ["apple-bipbop"]],
+  ];
+function arraysEqual(a, b) {
+  return (
+    Array.isArray(a) &&
+    Array.isArray(b) &&
+    a.length === b.length &&
+    a.every((value, index) => value === b[index])
+  );
+}
+export function migrateSettings(input, platform = process.platform) {
+  if (!isPlainObject(input)) return createDefaultSettings(platform);
+  const defaults = createDefaultSettings(platform),
+    version = Number(input.version) || 1;
+  if (version >= 7) return mergeSettings(defaults, input);
+  const merged = mergeSettings(defaults, input);
+  for (const [section, key, oldValue] of OLD_SCALAR_DEFAULTS)
+    if (input[section] && input[section][key] === oldValue)
+      merged[section][key] = defaults[section][key];
+  for (const [section, oldNames] of OLD_WORKLOAD_DEFAULTS)
+    if (input[section] && arraysEqual(input[section].workloads, oldNames))
+      merged[section].workloads = defaults[section].workloads;
+  const savedGates =
+    isPlainObject(input.load) && isPlainObject(input.load.gates)
+      ? input.load.gates
+      : {};
+  // Pre-v4 files kept no load settings beyond the gates; rebuild the rest.
+  if (version < 4) merged.load = mergeSettings(defaults.load, { gates: savedGates });
+  else if (version < 6) {
+    // Pre-v6 load budgets could exceed the current caps; clamp them.
+    merged.load = mergeSettings(merged.load, {
+      maxDownloadBytes: defaults.load.maxDownloadBytes,
+      durationMs: Math.min(
+        Number(merged.load.durationMs) || defaults.load.durationMs,
+        defaults.load.durationMs,
+      ),
+      uploadBytes: Math.min(
+        Number(merged.load.uploadBytes) || defaults.load.uploadBytes,
+        defaults.load.uploadBytes,
+      ),
+      fanoutRequests: Math.min(
+        Number(merged.load.fanoutRequests) || defaults.load.fanoutRequests,
+        defaults.load.fanoutRequests,
+      ),
+    });
+    merged.streaming.maxSegments = Math.min(
+      Number(merged.streaming.maxSegments) || defaults.streaming.maxSegments,
+      defaults.streaming.maxSegments,
+    );
+    merged.browsing.assetLimit = Math.min(
+      Number(merged.browsing.assetLimit) || defaults.browsing.assetLimit,
+      defaults.browsing.assetLimit,
+    );
+  }
+  if (version < 6) {
+    merged.browsing.maxBytes =
+      Number(input.browsing?.maxBytes) ||
+      Number(input.browsing?.estimatedMaxBytes) ||
+      defaults.browsing.maxBytes;
+    merged.streaming.maxBytes =
+      Number(input.streaming?.maxBytes) ||
+      Number(input.streaming?.estimatedMaxBytes) ||
+      defaults.streaming.maxBytes;
+    if ("abr" === merged.streaming.variantMode)
+      merged.streaming.variantMode = "lowest";
+  }
+  if (version < 7) {
+    // v6 load defaults: stored values equal to these are upgraded, per key.
+    const isAndroid = "android" === platform,
+      oldLoadDefaults = {
+        durationMs: isAndroid ? 1e4 : 12e3,
+        maxDownloadBytes: isAndroid ? 12 * MIB : 24 * MIB,
+        flows: isAndroid ? 3 : 6,
+        uploadBytes: isAndroid ? 1 * MIB : 2 * MIB,
+        uploadFlows: 2,
+        fanoutRequests: isAndroid ? 4 : 6,
+        idleSamples: 4,
+        timeoutMs: 2e4,
+        minBytes: isAndroid ? 6 * MIB : 12 * MIB,
+      };
+    for (const [key, oldValue] of Object.entries(oldLoadDefaults))
+      if (input.load?.[key] === oldValue) merged.load[key] = defaults.load[key];
+  }
+  merged.version = 7;
+  merged.migratedFrom = version;
+  return merged;
+}
+export function loadSettings(filePath) {
+  try {
+    return migrateSettings(JSON.parse(fs.readFileSync(filePath, "utf8")));
+  } catch {
+    return mergeSettings(DEFAULT_SETTINGS, {});
+  }
+}
+export function saveSettings(filePath, settings) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`, {
+    mode: 384,
+  });
+  return filePath;
+}
+export function estimateTrafficBytes(settings) {
+  const load = settings.load || {},
+    streaming = settings.streaming || {},
+    browsing = settings.browsing || {},
+    loadDisabled = false === load.enabled,
+    downloadBytes = loadDisabled
+      ? 0
+      : Number(load.maxDownloadBytes) || 24 * MIB,
+    uploadBytes = loadDisabled ? 0 : Number(load.uploadBytes) || 0,
+    fanoutBytes = loadDisabled
+      ? 0
+      : 128 * (Number(load.fanoutRequests) || 0) * 1024,
+    controlBytes =
+      loadDisabled || !load.control?.enabled
+        ? 0
+        : Number(load.control.bytes) || 0,
+    streamingBytes =
+      false === streaming.enabled
+        ? 0
+        : Number(streaming.maxBytes ?? streaming.estimatedMaxBytes) || 0,
+    browsingBytes =
+      false === browsing.enabled
+        ? 0
+        : Number(browsing.maxBytes ?? browsing.estimatedMaxBytes) || 0;
+  return Math.round(
+    downloadBytes +
+      uploadBytes +
+      fanoutBytes +
+      controlBytes +
+      streamingBytes +
+      browsingBytes,
+  );
+}
+export function resolveWorkloads({ settings, catalog, kind }) {
+  const selectedNames = settings[kind]?.workloads || [],
+    custom = settings.customWorkloads?.[kind] || [];
+  return [
+    ...(catalog[kind] || []).filter((workload) =>
+      selectedNames.includes(workload.name),
+    ),
+    ...custom,
+  ];
+}
+export function loadCatalog(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
