@@ -51,6 +51,7 @@ import {
   decayedCounts,
   mergeRunIntoReputation,
   primerTierForRecord,
+  rankCandidates,
 } from './hard-reputation.js';
 
 export const ENGINE_BLOCK_STATE_VERSION = 1;
@@ -203,6 +204,7 @@ function serializeBlockState(allStates, totals) {
       hardDead: state.hardDead,
       addressesExhausted: state.addressesExhausted,
       retired: state.retired,
+      expansionProbes: state.expansionProbes,
       children: state.children,
       records: [...state.records.values()].map((record) => ({
         candidate: record.candidate,
@@ -315,14 +317,15 @@ export async function runBlockScreening({
     state.extensionCounted = Boolean(entry.extensionCounted);
     state.hardDead = Boolean(entry.hardDead);
     state.addressesExhausted = Boolean(entry.addressesExhausted);
+    state.expansionProbes = entry.expansionProbes ?? 0;
     state.children = entry.children ?? null;
     for (const saved of entry.records ?? []) {
       const summary = buildEligibilitySummary({
         ip: saved.candidate.ip,
         range: saved.candidate.range,
         eligibility: saved.observations,
+        block: saved.candidate.block,
       });
-      summary.block = saved.candidate.block;
       state.records.set(saved.candidate.ip, {
         candidate: saved.candidate,
         observations: saved.observations,
@@ -484,8 +487,8 @@ export async function runBlockScreening({
       ip: candidate.ip,
       range: candidate.range,
       eligibility: observations,
+      block: candidate.block,
     });
-    summary.block = candidate.block;
     const address = state.block.base + candidate.hostOffset;
     state.records.set(candidate.ip, {
       candidate,
@@ -1027,32 +1030,25 @@ export async function runBlockScreening({
   }
 
   // --- Reputation merge -------------------------------------------------------
-  function compareBestCandidates(left, right) {
-    if (left.successes !== right.successes) return right.successes - left.successes;
-    if (left.attempts !== right.attempts) return right.attempts - left.attempts;
-    const leftMedian = left.handshakeMedianMs ?? Number.POSITIVE_INFINITY;
-    const rightMedian = right.handshakeMedianMs ?? Number.POSITIVE_INFINITY;
-    if (leftMedian !== rightMedian) return leftMedian - rightMedian;
-    return left.ip.localeCompare(right.ip);
-  }
-
   // One merge input per non-retired block (spec §7.1). A split parent is
   // not merged: its evidence lives on, partitioned, in its children, so
-  // merging it too would double-count the same probes.
+  // merging it too would double-count the same probes. The best list is
+  // ranked by hard-reputation's rankCandidates — the persistence module
+  // owns that ranking and its top-4 cap, so the merge applies exactly
+  // the order built here and no second implementation exists.
   function buildBlockResults() {
     const results = [];
     for (const state of allStates) {
       if (state.retired) continue;
       if (state.runAttempts === 0 && state.records.size === 0) continue;
-      const best = [...state.records.values()]
-        .map((record) => ({
+      const best = rankCandidates(
+        [...state.records.values()].map((record) => ({
           ip: record.candidate.ip,
           attempts: record.observations.length,
           successes: record.observations.filter((item) => item.ok).length,
           handshakeMedianMs: record.summary.eligibility.handshakeMedianMs,
-        }))
-        .sort(compareBestCandidates)
-        .slice(0, 4);
+        })),
+      );
       const successful = [...state.records.values()]
         .flatMap((record) => record.observations.filter((item) => item.ok));
       results.push({

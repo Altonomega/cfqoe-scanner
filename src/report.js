@@ -39,11 +39,12 @@ export function buildEligibilitySummary({
   range,
   eligibility,
   temporalBlocks = 1,
+  block = null,
 }) {
   const successful = eligibility.filter((observation) => observation.ok),
     attempts = eligibility.length,
-    successes = successful.length;
-  return {
+    successes = successful.length,
+    summary = {
     ip,
     range,
     eligibility: {
@@ -75,6 +76,12 @@ export function buildEligibilitySummary({
       errors: summarizeProbeErrors(eligibility),
     },
   };
+  // Block-adaptive runs tag the summary with its catalog block so the
+  // report can attribute candidates to blocks. Callers that pass no block
+  // (every legacy path) get the exact pre-redesign shape back — the key
+  // is only ever added, never defaulted.
+  if (block) summary.block = block;
+  return summary;
 }
 function medianOf(values, pick) {
   return median(values.map(pick).filter(Number.isFinite));
