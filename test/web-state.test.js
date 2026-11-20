@@ -41,6 +41,44 @@ test("counters carry the narration fields: screening round + current candidate I
   assert.equal(state.buildSnapshot(FACTS).run.counters.currentIp, "203.0.113.7");
 });
 
+test("calibration counters: the hunt flag rides hunt events through the store and clears on ladder events (0.9.2 D4)", async () => {
+  const state = makeState();
+  const frames = [];
+  state.beginRun({ mode: "full", runId: "run-hunt", settings: {} });
+  state.addClient({ wantsTail: false, send: (type, payload) => frames.push({ type, payload }) });
+  // The exact sequence scan.js emits during calibration: the control
+  // hunt announces at 0 and counts each attempt with hunt: true…
+  state.onProgress({ phase: "calibrating", completed: 0, total: 32, hunt: true });
+  state.onProgress({ phase: "calibrating", completed: 17, total: 32, hunt: true });
+  const during = state.buildSnapshot(FACTS).run.counters;
+  assert.equal(during.hunt, true, "the snapshot's counters carry the hunt while it runs");
+  assert.equal(during.completed, 17);
+  assert.equal(during.total, 32);
+  // …and the broadcast counters frame carries it too — the frame is
+  // the client's only live source, so the flag must survive the
+  // store's rebuild, not just the snapshot's copy of it.
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const huntFrame = frames.find((frame) => frame.type === "counters");
+  assert.ok(huntFrame, "a counters frame was broadcast during the hunt");
+  assert.equal(huntFrame.payload.hunt, true);
+  assert.equal(huntFrame.payload.total, 32);
+  // Ladder events carry no hunt flag; the counters must stop
+  // claiming a hunt, or the client labels ladder levels as hunt
+  // attempts (and hunt attempts as levels) — the discrimination is
+  // the whole point of the flag.
+  state.onProgress({ phase: "calibrating", completed: 1, total: 6, level: 2 });
+  const ladder = state.buildSnapshot(FACTS).run.counters;
+  assert.equal(ladder.hunt, false, "ladder progress is not a hunt");
+  assert.equal(ladder.completed, 1);
+  assert.equal(ladder.total, 6);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const countersFrames = frames.filter((frame) => frame.type === "counters");
+  assert.equal(countersFrames[countersFrames.length - 1].payload.hunt, false);
+  // Later phases never resurrect it.
+  state.onProgress({ phase: "screening", completed: 1, total: 120 });
+  assert.equal(state.buildSnapshot(FACTS).run.counters.hunt, false);
+});
+
 test("defect 7: after finishRun the snapshot serves the terminal status — event, snapshot and greeting agree", () => {
   const state = makeState();
   state.beginRun({ mode: "quick", runId: "run-2", settings: {} });

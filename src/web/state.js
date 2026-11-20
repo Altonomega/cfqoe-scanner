@@ -813,6 +813,13 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
         // only how much is done. Absent outside the phases that know.
         round: progress.round ?? run.counters.round ?? null,
         currentIp: progress.ip ?? progress.item?.ip ?? run.counters.currentIp ?? null,
+        // Calibration's two sub-steps share the calibrating phase's
+        // completed/total: the control hunt (up to 32 probes) and the
+        // level ladder (a handful). The hunt flag is per-event, not
+        // sticky — hunt events always carry hunt: true and ladder
+        // events carry none — so the consoles can label the count
+        // truthfully instead of reading hunt attempts as levels.
+        hunt: progress.hunt === true,
         ...(run.mode === "hard" ? tracker.counters() : {}),
       };
       if (progress.note) pushTicker(progress.note);
