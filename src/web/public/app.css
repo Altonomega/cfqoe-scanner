@@ -4,6 +4,32 @@
    --g synthesis, --t stop. No gradients, no glass, no shadows except the
    block inspector's single warm elevation. */
 
+/* Bundled Vazirmatn (SIL OFL 1.1 — license in fonts/OFL.txt), subset
+   to the Arabic blocks + basic punctuation/digits and served locally
+   like every other asset: Persian text gets the same typeface on
+   every platform instead of whatever the OS happens to ship. The
+   unicode-range is the subset's exact coverage, so the browser only
+   downloads a weight when text in those ranges actually renders —
+   and Latin text never triggers it (the stack's Latin faces serve
+   those glyphs). font-display: swap keeps text visible in the
+   fallback while the file is on its way. */
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/Vazirmatn-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0020-002F, U+0030-0039, U+003A-0040, U+005B-0060, U+007B-007E, U+00AB, U+00BB, U+0600-06FF, U+0750-077F, U+08A0-08FF, U+200C, U+200D, U+2013, U+2014, U+2018, U+2019, U+201C, U+201D, U+2026;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/Vazirmatn-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0020-002F, U+0030-0039, U+003A-0040, U+005B-0060, U+007B-007E, U+00AB, U+00BB, U+0600-06FF, U+0750-077F, U+08A0-08FF, U+200C, U+200D, U+2013, U+2014, U+2018, U+2019, U+201C, U+201D, U+2026;
+}
+
 :root {
   --a: oklch(0.60 0.13 150);
   --c: oklch(0.52 0.12 255);

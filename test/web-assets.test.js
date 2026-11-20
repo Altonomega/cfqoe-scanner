@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -30,8 +31,15 @@ test('bilingual contract: both string tables, RTL switch, bidi isolation, Persia
   assert.ok(js.includes('en: {') && js.includes('fa: {'), 'both STR tables present');
   assert.ok(js.includes('document.documentElement.dir = lang === "fa" ? "rtl" : "ltr"'), 'root dir switches with language');
   assert.ok(css.includes('unicode-bidi: isolate'), 'data spans are bidi-isolated');
-  assert.ok(css.includes('"Vazirmatn"'), 'Persian font stack present (system fonts only, no fetch)');
-  assert.ok(!css.includes('@font-face'), 'no bundled or fetched fonts');
+  assert.ok(css.includes('"Vazirmatn"'), 'Persian font stack present');
+  // The bundled Vazirmatn (W5): @font-face may exist, but only for
+  // the local subset files — never a fetched font.
+  assert.ok(css.includes('@font-face'), 'the bundled Vazirmatn is wired via @font-face');
+  assert.ok(css.includes('font-display: swap'), 'text stays visible while the font loads');
+  assert.ok(css.includes('unicode-range:'), 'the face is range-gated to the subset coverage');
+  assert.ok(!/@font-face[^}]*url\(\s*["']?https?:/.test(css), 'no fetched fonts');
+  assert.ok(css.includes('url("fonts/Vazirmatn-Regular.woff2")'), 'regular weight is the local subset');
+  assert.ok(css.includes('url("fonts/Vazirmatn-Bold.woff2")'), 'bold weight is the local subset');
 });
 
 test('token hygiene (Shield R-04): the client never stores or sends a token', () => {
@@ -73,4 +81,27 @@ test('size ratchet: the three assets stay a localhost-instant payload', () => {
   // RTL support legitimately grew it. Ratchet at 160 KB so it cannot
   // creep silently from here (see the W4 report for the revision note).
   assert.ok(total <= 160 * 1024, 'total ' + total + ' bytes exceeds the 160 KB ratchet');
+});
+
+test('bundled font: Vazirmatn subsets stay within their own byte budget, license included', () => {
+  // The font bytes are accounted separately from the code-asset
+  // ratchet above: they are data, not code, they download lazily
+  // (unicode-range + font-display: swap, only when Persian text
+  // renders), and folding them into the 160 KB would either blow the
+  // ratchet or force the code budget down for a one-time typography
+  // purchase. Their own cap is 70 KB for all weights combined.
+  const fontDir = pub('fonts');
+  const weights = ['Vazirmatn-Regular.woff2', 'Vazirmatn-Bold.woff2'];
+  const total = weights.reduce((n, name) => n + fs.statSync(path.join(fontDir, name)).size, 0);
+  assert.ok(total <= 70 * 1024, 'font total ' + total + ' bytes exceeds the 70 KB font cap');
+  // SIL OFL 1.1 requires the license to travel with the font.
+  const license = fs.readFileSync(path.join(fontDir, 'OFL.txt'), 'utf8');
+  assert.ok(license.includes('SIL Open Font License'), 'the OFL license ships with the fonts');
+  for (const name of weights) {
+    const head = Buffer.alloc(4);
+    const fd = fs.openSync(path.join(fontDir, name), 'r');
+    fs.readSync(fd, head, 0, 4, 0);
+    fs.closeSync(fd);
+    assert.equal(head.toString('ascii'), 'wOF2', name + ' is a real woff2 file');
+  }
 });
