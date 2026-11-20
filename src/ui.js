@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { VERSION } from "./version.js";
 const colorEnabled =
   void 0 === process.env.NO_COLOR && !1 !== process.stdout.isTTY;
 function wrapAnsi(code, text) {
@@ -16,7 +17,7 @@ export const color = {
 export function banner() {
   return [
     color.blue("+--------------------------------------------+"),
-    `${color.blue("|")}      ${color.bold("CFQoE Cloudflare IP Scanner")}  v0.8.6   ${color.blue("|")}`,
+    `${color.blue("|")}      ${color.bold("CFQoE Cloudflare IP Scanner")}  v${VERSION}${" ".repeat(Math.max(1, 8 - VERSION.length))}${color.blue("|")}`,
     `${color.blue("|")}  ${color.dim("Cost-aware measurement, capped traffic")}  ${color.blue("|")}`,
     color.blue("+--------------------------------------------+"),
   ].join("\n");
