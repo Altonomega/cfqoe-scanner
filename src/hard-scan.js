@@ -447,6 +447,10 @@ export async function runHardScan({
         fs.rmSync(file, { force: !0 });
       } catch {}
   }
+  // Calibration probes the path before the sweep starts (it runs inside
+  // the declaration chain below); announce it, or the run opens with a
+  // silent minute — the same fix as the Full path.
+  emitProgress({ phase: "calibrating", completed: 0, total: 1 }, "calibrating");
   // The probe binding for every stage below: the injected task when a
   // test supplies one, otherwise the real websocket probe. It reads
   // `settings` lazily because calibration replaces the settings object
@@ -493,6 +497,15 @@ export async function runHardScan({
     calibration: { ...settings.calibration, result: calibration },
   }),
     (state.settings = settings));
+  emitProgress(
+    {
+      phase: "calibrating",
+      completed: 1,
+      total: 1,
+      note: `concurrency ${calibration.selectedConcurrency} selected`,
+    },
+    "calibrating",
+  );
   // Same calibration verdict as the Full path records (scan.calibration):
   // the selected concurrency and why, with per-level results.
   logger.info("hard.calibration", {
@@ -916,7 +929,14 @@ export async function runHardScan({
       onProgress,
     }) {
       const tunnelResults = new Map();
-      let xrayInfo = { enabled: !1, path: null, reason: "disabled" };
+      let xrayInfo = {
+        enabled: !1,
+        path: null,
+        // "disabled" only when the stage is off; an enabled stage with
+        // nothing to measure says so — the summaries print this reason,
+        // and conflating the two hid empty finalist pools.
+        reason: settings.tunnel.enabled ? "no-candidates" : "disabled",
+      };
       if (!settings.tunnel.enabled || 0 === candidates.length)
         return { xrayInfo, tunnelResults };
       const located = locateXray({
@@ -973,6 +993,15 @@ export async function runHardScan({
               shutdownGraceMs: settings.tunnel.shutdownGraceMs,
               logger,
             });
+            // Sub-stage notes mirror the Full path's tunnel stage: a
+            // multi-minute finalist session must say which workload
+            // is running, not sit on the bare "final QoE ranking".
+            onProgress({
+              phase: "hard-finalize",
+              completed,
+              total,
+              note: `web transfer · ${candidate.ip}`,
+            });
             for (const workload of browsingWorkloads)
               browsingResults.push(
                 await probeBrowsing({
@@ -985,6 +1014,12 @@ export async function runHardScan({
                   logger,
                 }),
               );
+            onProgress({
+              phase: "hard-finalize",
+              completed,
+              total,
+              note: `streaming · ${candidate.ip}`,
+            });
             for (const workload of streamingWorkloads)
               streamingResults.push(
                 await probeStreaming({
@@ -1001,6 +1036,12 @@ export async function runHardScan({
                 }),
               );
             if (settings.load?.enabled) {
+              onProgress({
+                phase: "hard-finalize",
+                completed,
+                total,
+                note: `real load · ${candidate.ip}`,
+              });
               const loadResult = await runLoadProbe({
                 proxy: xrayHandle.socks,
                 endpoints: settings.load.endpoints,
@@ -1202,9 +1243,21 @@ export async function runHardScan({
     (state.lastReport = written.jsonPath),
     persistState(layout, state),
     canceled || removeStateFile(layout),
+    // The engine's stop reason and the reputation outcome ride the
+    // RETURN value, never report.totals (whose key set is pinned by
+    // the report contract): the end-of-run summaries and run.end need
+    // them, and until now the engine computed the reason and dropped
+    // it on the floor.
+    (written.stoppedReason =
+      engineOutcome?.stoppedReason ?? (canceled ? "canceled" : "completed")),
+    (written.reputationSaved = Boolean(engineOutcome?.completed)),
+    (written.reputationBlocks = reputationStore
+      ? Object.keys(reputationStore.blocks).length
+      : 0),
     logger.info("hard.complete", {
       runId: state.runId,
       canceled,
+      stoppedReason: written.stoppedReason,
       tested: state.counts.tested,
       eligible: state.counts.eligible,
       retryQueued: state.counts.retryQueued,

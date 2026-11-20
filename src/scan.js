@@ -62,6 +62,9 @@ export async function runScan({
   const target = describeVless(vless),
     seed = randomInt(0, 4294967296);
   let effectiveSettings = { ...settings, scan: { ...settings.scan, seed } };
+  // Calibration probes the path before the scan starts (up to ~80 s of
+  // probing); announce it, or the run opens with a silent minute.
+  emitProgress({ phase: "calibrating", completed: 0, total: 1 });
   const ranges = parseRangeList(fs.readFileSync(layout.rangesFile, "utf8")),
     candidates = sampleCandidates({
       ranges,
@@ -84,6 +87,12 @@ export async function runScan({
     },
     calibration: { ...effectiveSettings.calibration, result: calibration },
   };
+  emitProgress({
+    phase: "calibrating",
+    completed: 1,
+    total: 1,
+    note: `concurrency ${calibration.selectedConcurrency} selected`,
+  });
   // Calibration chose the operative concurrency (the configured value
   // is only its ceiling); record the verdict with the per-level results
   // or "why is this scan crawling at concurrency 1?" is unanswerable
