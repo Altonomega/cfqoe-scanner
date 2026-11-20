@@ -916,3 +916,90 @@ test("fault containment: a throwing handler answers a static 500 and the server 
     await api.stop("test");
   }
 });
+
+test("run failure: a run whose engine throws ends in run-state failed, with run.end failed in its log (F-2)", async () => {
+  const { layout } = makeLayout();
+  // A stored config the engines refuse at the door (non-WebSocket
+  // transport): the run starts, the engine throws immediately, and
+  // the failure path — not the cancel path — must answer for it.
+  writeSecretFile(
+    layout.secretFile,
+    `vless://${TEST_UUID}@edge.example.com:443?encryption=none&security=none&type=grpc&host=edge.example.com#test`,
+  );
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  let resolveFailed;
+  const failedEvent = new Promise((resolve) => { resolveFailed = resolve; });
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const sse = http.get(
+      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie } },
+      (res) => {
+        let buffer = "";
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const type = /event: (\S+)/.exec(frame)?.[1];
+            const dataLine = /data: (.*)/s.exec(frame)?.[1];
+            if (!type || !dataLine) continue;
+            const payload = JSON.parse(dataLine);
+            if (type === "run-state" && payload.status === "failed") resolveFailed(payload);
+          }
+        });
+      },
+    );
+    sse.on("error", () => {});
+
+    const started = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/run",
+      headers: mutation(cookie),
+      body: JSON.stringify({ mode: "full" }),
+    });
+    assert.equal(started.status, 200);
+    const { runId } = JSON.parse(started.body);
+    assert.ok(runId);
+
+    let deadline;
+    const timeout = new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("no failed run-state within 15s")), 15000);
+    });
+    const payload = await Promise.race([failedEvent, timeout]);
+    clearTimeout(deadline);
+    sse.destroy();
+    assert.equal(payload.runId, runId);
+    assert.equal(payload.mode, "full");
+
+    // The run's own log closes the story the stream told: run.end
+    // with status "failed" (not "canceled"). The stream event fires
+    // before the logger's close flush lands, so poll for the record.
+    const logPath = path.join(layout.logs, `run-${runId}.ndjson`);
+    let runEnd = null;
+    for (let attempt = 0; attempt < 50 && !runEnd; attempt += 1) {
+      try {
+        const records = fs
+          .readFileSync(logPath, "utf8")
+          .split("\n")
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line));
+        runEnd = records.find((record) => record.event === "run.end") ?? null;
+      } catch {
+        // The file may not exist yet on the first polls.
+      }
+      if (!runEnd) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(runEnd, "run.end exists");
+    assert.equal(runEnd.status, "failed");
+
+    // And the snapshot returns to the idle truth — no phantom run.
+    const after = JSON.parse(
+      (await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body,
+    );
+    assert.equal(after.run, null);
+  } finally {
+    await api.stop("test");
+  }
+});

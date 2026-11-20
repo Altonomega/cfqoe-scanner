@@ -136,6 +136,7 @@ en: {
   "note.runActive": "A run is already active ({run}).", "note.configMissing": "No VLESS configuration is stored — import one first.",
   "note.serverStopped": "Server stopped. The plate above is the last known state — relaunch from the terminal to continue.",
   "note.stopped": "Run stopped safely; progress is checkpointed.", "note.resumed": "Resumed from the checkpoint.",
+  "note.failed": "The run failed — see Diagnostics for what the log recorded.",
   "tick.calibrated": "Calibration: your path sustains {n} parallel probes; the scan will use {n}.",
   "tick.primerDone": "Primer complete: {alive} of {blocks} blocks answered at least once.",
   "tick.coverage": "Split-coverage: {suspects} suspects examined · {split} blocks split.",
@@ -231,6 +232,7 @@ fa: {
   "note.runActive": "اجرایی هم‌اکنون فعال است ({run}).", "note.configMissing": "پیکربندی VLESS ذخیره نشده است — اول یکی وارد کنید.",
   "note.serverStopped": "سرور متوقف شد. پلیت بالا آخرین وضعیت شناخته‌شده است — برای ادامه از ترمینال دوباره اجرا کنید.",
   "note.stopped": "اجرا با امنیت متوقف شد؛ پیشرفت چک‌پوینت شده است.", "note.resumed": "از چک‌پوینت ادامه یافت.",
+  "note.failed": "اجرا ناموفق بود — برای جزئیات، لاگ را در عیب‌یابی ببینید.",
   "tick.calibrated": "کالیبراسیون: مسیر شما {n} پروب موازی را تاب می‌آورد؛ اسکن از {n} استفاده می‌کند.",
   "tick.primerDone": "پرایمر کامل شد: {alive} از {blocks} بلاک دست‌کم یک‌بار پاسخ دادند.",
   "tick.coverage": "پوشش شکافت: {suspects} مظنون بررسی شد · {split} بلاک شکافت.",
@@ -908,8 +910,9 @@ const app = {
       if (d.status === "running" && d.runId !== this._lastRunId) { this.ledger.clear(); this.lane = []; this.tracePts = []; }
       this._lastRunId = d.runId;
       this.runStatus = d.status; this.runMode = d.mode; this.runId = d.runId;
-      if (d.status === "complete" || d.status === "paused-done") setTimeout(() => this.resync(), 350);
+      if (d.status === "complete" || d.status === "paused-done" || d.status === "failed") setTimeout(() => this.resync(), 350);
       if (d.status === "paused-done") this.showNotice(t("note.stopped"), "info");
+      if (d.status === "failed") this.showNotice(t("note.failed"));
     }
     this.refreshChrome();
     if (this.view && this.view.onEvent) this.view.onEvent(type, d);

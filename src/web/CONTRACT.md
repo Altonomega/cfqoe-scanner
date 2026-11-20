@@ -42,6 +42,14 @@ W3 should implement them as written or renegotiate here, in writing:
 7. **Errors** are `{ error, message }` with the terminal's own wording;
    `run_active` and `config_missing` error codes are rendered by the
    client in its own words, everything else shows `message`.
+8. **Candidates arrive at completion.** The engines produce final
+   candidate rows only at the end of a run — no mid-run row stream
+   exists to forward — so `candidate` events fire in a burst at run
+   end, in the report's own ranked order, just before the terminal
+   `run-state`. During a run the ledger is empty by design; progress
+   is carried by the `phase` / `counters` / `blocks` events, not by
+   rows. A client must not read an empty mid-run ledger as "no
+   candidates found".
 
 Simulation mode (in `app.js`) implements this entire contract locally
 and is the reference for the shapes above.
