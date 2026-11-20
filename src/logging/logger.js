@@ -169,7 +169,17 @@ export function createLogger({ level = 'info', directory = null, runId = randomU
     if ((LEVELS[levelName] ?? 0) < threshold) return;
     counters[levelName] += 1;
     seq += 1;
+    // The envelope is stamped AFTER the details spread, on purpose:
+    // the identity fields (runId, level, event, seq, time) are the
+    // logger's own facts and must win over a detail key of the same
+    // name. Several call sites pass the run's id as a detail ({ runId }
+    // on scan.start / web.control.scan-start); with the spread last,
+    // that value — UUID-shaped, so redact() rewrites it — replaced the
+    // record's real runId with "[REDACTED_UUID]", and the log's records
+    // stopped agreeing about which run they belong to. Detail values
+    // are still fully redacted; only the collision is removed.
     const record = {
+      ...redact(details || {}),
       v: 2,
       time: new Date().toISOString(),
       elapsedMs: Math.max(0, Math.round(performance.now() - createdAtMs)),
@@ -178,7 +188,6 @@ export function createLogger({ level = 'info', directory = null, runId = randomU
       level: levelName,
       phase,
       event,
-      ...redact(details || {}),
     };
     if (stream && !streamFailed) stream.write(`${JSON.stringify(record)}\n`);
     if (!quiet && (levelName === 'warn' || levelName === 'error')) {

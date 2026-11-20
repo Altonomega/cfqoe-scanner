@@ -1053,6 +1053,104 @@ test("fault containment: a throwing handler answers a static 500 and the server 
   }
 });
 
+test("control rejections are logged: every refused start/stop/import/remove/server-stop leaves web.control.reject (Signal log audit)", async () => {
+  const blackholeSockets = new Set();
+  const blackhole = net.createServer((socket) => {
+    blackholeSockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => blackholeSockets.delete(socket));
+  });
+  await new Promise((resolve) => blackhole.listen(18443, "0.0.0.0", resolve));
+  const ranges = [];
+  for (let i = 0; i < 300; i += 1) ranges.push(`127.${(i >> 8) & 255}.${i & 255}.0/24`);
+  const { layout } = makeLayout({ rangesText: `${ranges.join("\n")}\n` });
+  const testSettings = loadSettings(layout.settingsFile);
+  testSettings.calibration.enabled = false;
+  testSettings.scan.timeoutMs = 400;
+  saveSettings(layout.settingsFile, testSettings);
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const post = (requestPath, body) =>
+      rawRequest({ port, method: "POST", path: requestPath, headers: mutation(cookie), body: JSON.stringify(body) });
+
+    // No config yet.
+    assert.equal((await post("/api/run", { mode: "quick" })).status, 400);
+    // A rejected import (grpc is refused by the web layer itself).
+    assert.equal((await post("/api/config", { uri: `vless://${TEST_UUID}@edge.example.com:443?encryption=none&security=none&type=grpc&host=edge.example.com#test` })).status, 400);
+    // A rejected import through the other branch: no URI at all (the
+    // handler's early return must leave the same record — the two
+    // branches are counted separately below, not just keyed).
+    assert.equal((await post("/api/config", {})).status, 400);
+    // A good import, pointed at the blackhole.
+    assert.equal((await post("/api/config", { uri: `vless://${TEST_UUID}@edge.example.com:18443?encryption=none&security=none&type=ws&host=edge.example.com&path=%2Fws#test` })).status, 200);
+    // Resume with no paused state; unknown mode.
+    assert.equal((await post("/api/run", { mode: "hard", resume: true })).status, 400);
+    assert.equal((await post("/api/run", { mode: "bogus" })).status, 400);
+    // A real start, then every conflict refusal.
+    const started = await post("/api/run", { mode: "hard" });
+    assert.equal(started.status, 200);
+    const { runId } = JSON.parse(started.body);
+    assert.equal((await post("/api/run", { mode: "full" })).status, 409);
+    assert.equal((await post("/api/config/remove", {})).status, 409);
+    assert.equal((await post("/api/server/stop", {})).status, 409);
+    assert.equal((await post("/api/run/stop", {})).status, 200);
+    // Wait for the run to settle, then a stop with nothing running.
+    let settled = false;
+    for (let attempt = 0; attempt < 120 && !settled; attempt += 1) {
+      const res = await rawRequest({ port, path: "/api/state", headers: authed(cookie) });
+      const snap = JSON.parse(res.body);
+      if (snap.run && snap.run.status === "paused-done") settled = true;
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(settled, "the stopped hard run settles as paused-done");
+    assert.equal((await post("/api/run/stop", {})).status, 400);
+
+    // The server's own log carries one precise record per refusal.
+    const files = fs.readdirSync(layout.logs).filter((name) => name.endsWith(".ndjson"));
+    const allRecords = files.flatMap((name) =>
+      fs.readFileSync(path.join(layout.logs, name), "utf8").split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line)),
+    );
+    const rejects = allRecords.filter((record) => record.event === "web.control.reject");
+    const keys = new Set(rejects.map((record) => `${record.action}:${record.reason}`));
+    for (const expected of [
+      "run-start:config_missing",
+      "config-import:invalid_config",
+      "run-start:no_resume",
+      "run-start:bad_mode",
+      "run-start:run_active",
+      "config-remove:run_active",
+      "server-stop:run_active",
+      "run-stop:no_active_run",
+    ]) {
+      assert.ok(keys.has(expected), `missing reject record ${expected}; got ${JSON.stringify([...keys])}`);
+    }
+    // Both import-refusal branches logged: the grpc catch branch and
+    // the empty-URI early return — one record each, not just the key.
+    assert.equal(
+      rejects.filter((record) => record.action === "config-import" && record.reason === "invalid_config").length,
+      2,
+      "each refused import branch leaves its own reject record",
+    );
+    assert.ok(rejects.every((record) => record.level === "warn"));
+    assert.ok(rejects.filter((record) => record.action === "run-start").every((record) => typeof record.mode === "string"));
+
+    // And the run's own log: every record carries the run's real id —
+    // the envelope fix, end to end (records like web.control.scan-start
+    // and scan.start pass runId as a detail; it must not shadow).
+    const runRecords = allRecords.filter((record) => record.event === "run.start");
+    assert.equal(runRecords.length, 1);
+    const runFile = files.find((name) => name === `run-${runId}.ndjson`);
+    assert.ok(runFile, "run log file is named by the run id");
+    const own = fs.readFileSync(path.join(layout.logs, runFile), "utf8").split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
+    assert.ok(own.length > 0 && own.every((record) => record.runId === runId), "every record in the run log carries the run id verbatim");
+  } finally {
+    await api.stop("test");
+    blackhole.close();
+    for (const socket of blackholeSockets) socket.destroy();
+  }
+});
+
 test("run failure: a run whose engine throws ends in run-state failed, with run.end failed in its log (F-2)", async () => {
   const { layout } = makeLayout();
   // A stored config the engines refuse at the door (non-WebSocket
