@@ -155,7 +155,7 @@ test(
     const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
     const result = await runHardScan({
       vlessUri: VLESS_URI,
-      settings: makeSettings(),
+      settings: makeSettings({ engine: 'round-robin' }),
       layout,
       logger: silentLogger,
       runId: 'wiring-legacy',
