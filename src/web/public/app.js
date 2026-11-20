@@ -1467,8 +1467,8 @@ Views.reports = (el) => {
 };
 
 /* ---------------- settings ---------------- */
-Object.assign(STR.en, { "set.g.scan": "Scan", "set.g.verification": "Verification", "set.g.calibration": "Calibration", "set.g.tunnel": "Tunnel", "set.g.browsing": "Browsing", "set.g.streaming": "Streaming", "set.g.load": "Real load", "set.g.traffic": "Traffic budget", "set.g.hard": "Hard Deep Scan", "set.g.logging": "Logging", "set.hg.primer": "Primer & budget", "set.hg.splits": "Splits", "set.hg.reputation": "Reputation" });
-Object.assign(STR.fa, { "set.g.scan": "اسکن", "set.g.verification": "راستی‌آزمایی", "set.g.calibration": "کالیبراسیون", "set.g.tunnel": "تونل", "set.g.browsing": "مرور", "set.g.streaming": "استریمینگ", "set.g.load": "بار واقعی", "set.g.traffic": "بودجهٔ ترافیک", "set.g.hard": "اسکن عمیق (Hard)", "set.g.logging": "لاگ", "set.hg.primer": "پرایمر و بودجه", "set.hg.splits": "شکافت‌ها", "set.hg.reputation": "اعتبار" });
+Object.assign(STR.en, { "set.g.scan": "Scan", "set.g.verification": "Verification", "set.g.calibration": "Calibration", "set.g.tunnel": "Tunnel", "set.g.browsing": "Browsing", "set.g.streaming": "Streaming", "set.g.load": "Real load", "set.g.hard": "Hard Deep Scan", "set.g.logging": "Logging", "set.hg.primer": "Primer & budget", "set.hg.splits": "Splits", "set.hg.reputation": "Reputation" });
+Object.assign(STR.fa, { "set.g.scan": "اسکن", "set.g.verification": "راستی‌آزمایی", "set.g.calibration": "کالیبراسیون", "set.g.tunnel": "تونل", "set.g.browsing": "مرور", "set.g.streaming": "استریمینگ", "set.g.load": "بار واقعی", "set.g.hard": "اسکن عمیق (Hard)", "set.g.logging": "لاگ", "set.hg.primer": "پرایمر و بودجه", "set.hg.splits": "شکافت‌ها", "set.hg.reputation": "اعتبار" });
 const F = (p, ty, extra) => ({ p, ty, ...extra });
 const SETTINGS_SCHEMA = [
   { g: "scan", fields: [F("scan.perRange", "int"), F("scan.maxCandidates", "int"), F("scan.rounds", "int"), F("scan.concurrency", "int"), F("scan.timeoutMs", "int"), F("scan.minimumSuccessRate", "float"), F("scan.seed", "int", { pos: false }), F("scan.delayedRetry.enabled", "bool"), F("scan.delayedRetry.maxCandidates", "int")] },
