@@ -25,7 +25,7 @@ import { runScan } from "./scan.js";
 import { runHardScan } from "./hard-scan.js";
 import { runMenu, quickProfile, researchProfile } from "./menu/index.js";
 import { createWebServer, platformNoticeLines } from "./web/server.js";
-const HELP_TEXT = `${banner()}\n\n${color.bold("Usage")}\n  cfqoe                     open the interactive menu\n  cfqoe menu                same as above\n  cfqoe scan [options]      run a full scan\n  cfqoe quick [options]     run a reduced scan\n  cfqoe research [options]  run the slow repeated-evidence scan\n  cfqoe hard [options]      run the resumable hard deep scan\n  cfqoe resume [options]    resume the last hard scan\n  cfqoe import <vless-uri>  store the configuration locally\n  cfqoe check               verify Node, Xray and stored configuration\n  cfqoe web                 open the local web UI in your browser\n  cfqoe results             print the latest ranking\n  cfqoe diagnose [file]     summarize a log file\n  cfqoe help                show this help\n\n${color.bold("Scan options")}\n  --max N               maximum candidate IPs (scan/quick only)\n  --rounds N            eligibility rounds\n  --tunnel-limit N      candidates measured through the real tunnel\n  --tunnel-rounds N     observations per candidate\n  --segments N          streaming segments per observation\n  --verify-limit N      finalists sent to independent verification\n  --no-verify           skip independent verification (faster, weaker evidence)\n  --no-retry            skip the delayed retry of transient failures\n  --lowest-variant      use the lowest HLS rendition (conservative fixed mode)\n  --no-tunnel           skip the VLESS tunnel stage\n  --no-browsing         skip web transfer workloads\n  --no-streaming        skip streaming workloads\n  --no-load             skip the real-load stage (multi-megabyte transfer)\n  --load-duration N     seconds of sustained download per observation\n  --load-chunk-mb N     download chunk size in megabytes\n  --load-flows N        parallel download flows used to saturate the link\n  --load-control        also measure a non-Cloudflare control download\n  --gate-profile NAME   gate thresholds: balanced (default), strict, tolerant\n  --xray-path PATH      explicit Xray executable\n  --debug               verbose structured logging\n\n${color.bold("Principle")}\n  TCP connect time is diagnostic only. Ranking uses real WebSocket eligibility with\n  Wilson confidence bounds, adaptive verification, portable web transfer and\n  sequential video segment streaming. Every result carries a confidence label.\n`;
+const HELP_TEXT = `${banner()}\n\n${color.bold("Usage")}\n  cfqoe                     open the web UI in your browser\n  cfqoe web                 same as above\n  cfqoe menu                open the terminal menu instead\n  cfqoe scan [options]      run a full scan\n  cfqoe quick [options]     run a reduced scan\n  cfqoe research [options]  run the slow repeated-evidence scan\n  cfqoe hard [options]      run the resumable hard deep scan\n  cfqoe resume [options]    resume the last hard scan\n  cfqoe import <vless-uri>  store the configuration locally\n  cfqoe check               verify Node, Xray and stored configuration\n  cfqoe results             print the latest ranking\n  cfqoe diagnose [file]     summarize a log file\n  cfqoe help                show this help\n\n${color.bold("Scan options")}\n  --max N               maximum candidate IPs (scan/quick only)\n  --rounds N            eligibility rounds\n  --tunnel-limit N      candidates measured through the real tunnel\n  --tunnel-rounds N     observations per candidate\n  --segments N          streaming segments per observation\n  --verify-limit N      finalists sent to independent verification\n  --no-verify           skip independent verification (faster, weaker evidence)\n  --no-retry            skip the delayed retry of transient failures\n  --lowest-variant      use the lowest HLS rendition (conservative fixed mode)\n  --no-tunnel           skip the VLESS tunnel stage\n  --no-browsing         skip web transfer workloads\n  --no-streaming        skip streaming workloads\n  --no-load             skip the real-load stage (multi-megabyte transfer)\n  --load-duration N     seconds of sustained download per observation\n  --load-chunk-mb N     download chunk size in megabytes\n  --load-flows N        parallel download flows used to saturate the link\n  --load-control        also measure a non-Cloudflare control download\n  --gate-profile NAME   gate thresholds: balanced (default), strict, tolerant\n  --xray-path PATH      explicit Xray executable\n  --debug               verbose structured logging\n\n${color.bold("Principle")}\n  TCP connect time is diagnostic only. Ranking uses real WebSocket eligibility with\n  Wilson confidence bounds, adaptive verification, portable web transfer and\n  sequential video segment streaming. Every result carries a confidence label.\n`;
 function parseArgs(args) {
   const parsed = { flags: new Set(), values: new Map(), positional: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -330,11 +330,14 @@ async function runHardCommand(parsed, { resume }) {
     await logger.close();
   }
 }
-// `cfqoe web`: the on-demand web surface (plan ch. 3.6). Starts the
-// loopback server, hands the one-time bootstrap link to the browser
-// (and prints it — the printed link is the fallback and the only
-// place the session key ever appears), then waits: the surface
-// lives until Ctrl+C or the browser's own stop button ends it.
+// The web surface: `cfqoe web`, and — since 0.9.0 — the default for
+// a bare `cfqoe` (see resolveCommand). Starts the loopback server,
+// hands the one-time bootstrap link to the browser (and prints it —
+// the printed link is the fallback and the only place the session
+// key ever appears), then waits: the surface lives until Ctrl+C or
+// the browser's own stop button ends it. If no browser can be
+// opened the URL simply stays printed and the server keeps serving;
+// nothing falls back into the menu silently.
 async function runWebCommand() {
   const layout = ensureDirectories();
   let finish;
@@ -358,8 +361,18 @@ async function runWebCommand() {
   process.removeListener("SIGINT", onSigint);
   return 0;
 }
+// Which surface a command line asks for. The web UI is the primary
+// surface: a bare `cfqoe` (no words at all) launches it. The
+// terminal menu is explicit (`cfqoe menu`), `cfqoe web` is the same
+// launch spelled out, and every other word passes through untouched
+// — the scan subcommands are the scripting/field-test path. Pure, so
+// the default is pinned by a unit test instead of by habit.
+export function resolveCommand(argv = []) {
+  return argv.length > 0 ? argv[0] : "web";
+}
 export async function main(argv = process.argv.slice(2)) {
-  const [command = "menu", ...rest] = argv;
+  const command = resolveCommand(argv);
+  const rest = argv.slice(1);
   try {
     switch (command) {
       case "menu":
