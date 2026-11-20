@@ -130,6 +130,18 @@ export function createDefaultSettings(platform = process.platform) {
       splitMaxDepth: 2,
       splitAlpha: 0.05,
       splitMinEffect: 0.5,
+      // Split-coverage pass (5b analysis): between the primer and UCB
+      // expansion, a bounded reserve guarantees split-trigger depth to
+      // the blocks the primer flags — mixed primers, plus 0-success
+      // blocks via targeted draws into their less-observed half. The
+      // split signal lives in the per-half counters, which pure index
+      // order starves; the pass is capped at splitReserveFraction of
+      // the post-primer headroom so the adaptive phase always keeps a
+      // meaningful budget. splitReserveAlpha is the looser Fisher
+      // threshold that earns a near-miss suspect one deeper stage —
+      // the split itself still requires splitAlpha.
+      splitReserveFraction: 0.85,
+      splitReserveAlpha: 0.25,
       // Reputation has no staleness cutoff: stored evidence decays with a
       // reputationHalfLifeDays half-life and only steers the primer —
       // blocks seen within reputationSkipAgeDays skip it, blocks up to
