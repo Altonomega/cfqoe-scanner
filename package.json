@@ -14,7 +14,7 @@
   "scripts": {
     "start": "node bin/cfqoe.js menu",
     "check": "node --check src/cli.js",
-    "test": "node --test --test-timeout=20000 test/*.test.js",
+    "test": "node scripts/run-tests.mjs",
     "xray:install": "node scripts/install-xray.mjs"
   },
   "license": "SEE LICENSE IN LICENSE",
