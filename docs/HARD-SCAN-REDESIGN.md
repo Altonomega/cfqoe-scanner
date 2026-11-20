@@ -703,10 +703,59 @@ concurrency, no real waiting.
 7. **Determinism:** identical seeds → identical probe-sequence hashes,
    across process restarts.
 
+> **Erratum — 2026-11-20 (recorded after implementation).** Criterion 4
+> above is worded as a symmetric band ("within ± 0.05 of baseline (1)").
+> That wording is wrong. The criterion as implemented and tested
+> (`test/hard-dna-simulation.test.js`) is one-sided: **DNA recall@77 ≥
+> baseline (1) − 0.05**, with no upper bound. Map C is a "must not lose"
+> check (§9.1); a symmetric band is unsatisfiable jointly with criteria
+> 1–2, because on a null map the design's full block coverage makes its
+> pool recall structurally *higher* than a baseline that only ever
+> touches the first blocks of each range — the band would fail the
+> design for winning on the null map. The original wording is retained
+> above for the record; this note is the operative reading.
+
 Failure of any criterion sends the design back for revision of the
 implicated parameter (primer depth, depth cap, split thresholds, budget)
 before any user-facing release — the criteria are the contract, not a
 report card written afterwards.
+
+### 9.5 Measured results (2026-11-20)
+
+All seven criteria pass at the harness seed (`SIM_SEED 777`, virtual
+catalog scaled from the real one by the production budget ratio;
+harness: `test/hard-dna-simulation.test.js`).
+
+| # | Criterion | Bar | Measured |
+| --- | --- | --- | --- |
+| 1 | Map B recall@77 | ≥ 0.90 and ≥ baseline + 0.25 | 1.000 (baselines 0.100 / 0.200) |
+| 2 | Map A recall@77 | ≥ 0.85 and ≥ baseline + 0.15 | 1.000 |
+| 3 | Primer safety | ≥ 99% of top-77 blocks eligible at primer exit | 100% |
+| 4 | Map C null (one-sided — see erratum above) | ≥ baseline − 0.05 | pass |
+| 5a | False splits (Maps A–C, D-homogeneous) | ≤ 5% | 1.3–2.2% (A 2.2%, B 1.3%, C 1.8%, D-homog 2.1%) |
+| 5b | Map D split detection | ≥ 0.80 | **0.803 (49/61)** |
+| 6 | Warm start (A → A′) | cold recall at ≤ 45% of cold probes | equal recall at exactly 45% |
+| 7 | Determinism | identical probe-sequence hashes | identical SHA-256 |
+
+**Criterion 5b's margin is thin.** 0.803 is one block above the 0.80
+bar at the harness seed. The originally approved parameters measured
+0.557; the root cause and the fix (the bounded split-coverage pass
+between primer and expansion) are documented in
+`docs/HARD-SCAN-5B-ANALYSIS.md`. Spot checks at alternate seeds
+measured 0.820 (seed 1234) and 0.918 (seed 20261), so the harness
+figure is the conservative end of the observed range rather than a
+lucky seed — but at the contract seed the margin is one block, and
+any future change to primer depth, the reserve fraction, or the split
+thresholds must re-run this criterion before it ships.
+
+**Android caveat.** The contract above is desktop-parameterized
+(B = 72,000). At the approved Android budget (40,000 probes), the
+split-coverage pass reaches its reserve cap and truncates, so Map
+D-style split detection on Android is expected to fall below the
+0.80 bar. This is a consequence of the approved budget cap (§10,
+question 2), not an implementation defect; raising Android split
+detection means raising `hard.budgetProbes` or
+`hard.splitReserveFraction`, both user-tunable.
 
 ---
 

@@ -507,3 +507,10 @@ Total estimate: ≈ 1,600–2,100 lines including tests, across 8 commits.
 Steps 1–4 are additive dead code until step 5, and steps 5–7 are inert
 until step 8 — there is no point in the sequence where a half-landed
 redesign can change a user's scan.
+
+> **Status note — 2026-11-20.** All 8 steps have landed. Step 8 (the
+> default flip to `hard.engine: "blocks"`) is done, so the block-adaptive
+> engine is the default traversal for new Hard Deep Scan runs; the
+> round-robin engine remains in-tree as the selectable fallback and the
+> resume path for v3 checkpoints, exactly as sequenced above. This annex
+> is retained as the historical plan record.
