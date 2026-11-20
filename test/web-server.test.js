@@ -1049,6 +1049,10 @@ test("control rejections are logged: every refused start/stop/import/remove/serv
     assert.equal((await post("/api/run", { mode: "quick" })).status, 400);
     // A rejected import (grpc is refused by the web layer itself).
     assert.equal((await post("/api/config", { uri: `vless://${TEST_UUID}@edge.example.com:443?encryption=none&security=none&type=grpc&host=edge.example.com#test` })).status, 400);
+    // A rejected import through the other branch: no URI at all (the
+    // handler's early return must leave the same record — the two
+    // branches are counted separately below, not just keyed).
+    assert.equal((await post("/api/config", {})).status, 400);
     // A good import, pointed at the blackhole.
     assert.equal((await post("/api/config", { uri: `vless://${TEST_UUID}@edge.example.com:18443?encryption=none&security=none&type=ws&host=edge.example.com&path=%2Fws#test` })).status, 200);
     // Resume with no paused state; unknown mode.
@@ -1092,6 +1096,13 @@ test("control rejections are logged: every refused start/stop/import/remove/serv
     ]) {
       assert.ok(keys.has(expected), `missing reject record ${expected}; got ${JSON.stringify([...keys])}`);
     }
+    // Both import-refusal branches logged: the grpc catch branch and
+    // the empty-URI early return — one record each, not just the key.
+    assert.equal(
+      rejects.filter((record) => record.action === "config-import" && record.reason === "invalid_config").length,
+      2,
+      "each refused import branch leaves its own reject record",
+    );
     assert.ok(rejects.every((record) => record.level === "warn"));
     assert.ok(rejects.filter((record) => record.action === "run-start").every((record) => typeof record.mode === "string"));
 

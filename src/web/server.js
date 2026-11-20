@@ -344,6 +344,7 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
   async function handleConfigImport(req, res) {
     const body = await readJsonBody(req, BODY_CAP_SMALL);
     if (typeof body.uri !== "string" || body.uri.trim() === "") {
+      webLog.warn("web.control.reject", { action: "config-import", reason: "invalid_config" });
       return sendError(res, 400, "invalid_config", "Paste a VLESS link.");
     }
     // The terminal import's exact code path (R-09): normalize, parse,
