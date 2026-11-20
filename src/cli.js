@@ -1,1 +1,404 @@
-import e from"node:fs";import n from"node:path";import{banner as o,color as s,table as r,writeProgress as t,clearProgress as a}from"./ui.js";import{ensureDirectories as l,readSecretFile as i,writeSecretFile as c,fileIsProtected as d}from"./platform/paths.js";import{loadSettings as u,saveSettings as g}from"./config/settings.js";import{parseVlessUri as f,describeVless as m}from"./config/vless.js";import{locateXray as p,xrayVersion as h,xrayInstallHint as y}from"./platform/xray.js";import{createLogger as v,summarizeLogFile as w}from"./logging/logger.js";import{runScan as b}from"./scan.js";import{runHardScan as k}from"./hard-scan.js";import{runMenu as $,quickProfile as x,researchProfile as R}from"./menu/index.js";const N=`${o()}\n\n${s.bold("Usage")}\n  cfqoe                     open the interactive menu\n  cfqoe menu                same as above\n  cfqoe scan [options]      run a full scan\n  cfqoe quick [options]     run a reduced scan\n  cfqoe research [options]  run the slow repeated-evidence scan\n  cfqoe hard [options]      run the resumable hard deep scan\n  cfqoe resume [options]    resume the last hard scan\n  cfqoe import <vless-uri>  store the configuration locally\n  cfqoe check               verify Node, Xray and stored configuration\n  cfqoe results             print the latest ranking\n  cfqoe diagnose [file]     summarize a log file\n  cfqoe help                show this help\n\n${s.bold("Scan options")}\n  --max N               maximum candidate IPs (scan/quick only)\n  --rounds N            eligibility rounds\n  --tunnel-limit N      candidates measured through the real tunnel\n  --tunnel-rounds N     observations per candidate\n  --segments N          streaming segments per observation\n  --verify-limit N      finalists sent to independent verification\n  --no-verify           skip independent verification (faster, weaker evidence)\n  --no-retry            skip the delayed retry of transient failures\n  --lowest-variant      use the lowest HLS rendition (conservative fixed mode)\n  --no-tunnel           skip the VLESS tunnel stage\n  --no-browsing         skip web transfer workloads\n  --no-streaming        skip streaming workloads\n  --no-load             skip the real-load stage (multi-megabyte transfer)\n  --load-duration N     seconds of sustained download per observation\n  --load-chunk-mb N     download chunk size in megabytes\n  --load-flows N        parallel download flows used to saturate the link\n  --load-control        also measure a non-Cloudflare control download\n  --gate-profile NAME   gate thresholds: balanced (default), strict, tolerant\n  --xray-path PATH      explicit Xray executable\n  --debug               verbose structured logging\n\n${s.bold("Principle")}\n  TCP connect time is diagnostic only. Ranking uses real WebSocket eligibility with\n  Wilson confidence bounds, adaptive verification, portable web transfer and\n  sequential video segment streaming. Every result carries a confidence label.\n`;function S(e){const n={flags:new Set,values:new Map,positional:[]};for(let o=0;o<e.length;o+=1){const s=e[o];if(!s.startsWith("--")){n.positional.push(s);continue}const r=s.slice(2);if(["max","rounds","tunnel-limit","tunnel-rounds","segments","concurrency","verify-limit","load-duration","load-chunk-mb","load-flows"].includes(r)||"xray-path"===r||"log-level"===r||"gate-profile"===r){const s=e[o+1];if(void 0===s||s.startsWith("--"))throw new Error(`Missing value for --${r}`);n.values.set(r,s),o+=1}else n.flags.add(r)}return n}function q(e,n){const o=JSON.parse(JSON.stringify(e)),s=e=>{const o=n.values.get(e);if(void 0===o)return null;const s=Number(o);if(!Number.isFinite(s)||s<=0)throw new Error(`--${e} must be a positive number`);return s},r=s("max");r&&(o.scan.maxCandidates=r);const t=s("rounds");t&&(o.scan.rounds=t);const a=s("concurrency");a&&(o.scan.concurrency=a);const l=s("tunnel-limit");l&&(o.tunnel.limit=l);const i=s("tunnel-rounds");i&&(o.tunnel.rounds=i);const c=s("segments");c&&(o.streaming.maxSegments=c);const d=s("verify-limit");d&&(o.verification.limit=d),n.flags.has("no-verify")&&(o.verification.enabled=!1),n.flags.has("no-retry")&&(o.scan.delayedRetry.enabled=!1,o.hard.delayedRetry=!1),(n.flags.has("lowest-variant")||n.flags.has("abr"))&&(o.streaming.variantMode="lowest"),n.flags.has("no-tunnel")&&(o.tunnel.enabled=!1),n.flags.has("no-browsing")&&(o.browsing.enabled=!1),n.flags.has("no-streaming")&&(o.streaming.enabled=!1),n.flags.has("no-load")&&(o.load.enabled=!1);const u=s("load-duration");u&&(o.load.durationMs=1e3*u);const g=s("load-chunk-mb");g&&(o.load.chunkBytes=1024*g*1024);const f=s("load-flows");if(f&&(o.load.flows=Math.min(Math.round(f),16)),n.flags.has("load-control")&&(o.load.control={...o.load.control,enabled:!0}),n.values.has("gate-profile")){const e=n.values.get("gate-profile");if(!["balanced","strict","tolerant"].includes(e))throw new Error("--gate-profile must be balanced, strict or tolerant");o.load.gateProfile=e}return n.values.has("xray-path")&&(o.tunnel.xrayPath=n.values.get("xray-path")),n.flags.has("debug")&&(o.logging.level="debug"),n.values.has("log-level")&&(o.logging.level=n.values.get("log-level")),o}function P(e,n=15){const o=e.slice(0,n).map(e=>[e.ip,e.scores.overall??"-",e.scores.conservative??"-",e.scores.overallUncapped??"-",e.scores.conservativeUncapped??"-",e.scores.browsing??"-",e.scores.streaming??"-",`${Math.round(100*(e.eligibility.successRate||0))}%`,e.scores.reliabilityLower95??"-",e.eligibility.confidence||"-",e.measurement?.qoeConfidence||"-",e.eligibility.pops?.dominant||"-",e.streaming?.quality||"-",e.verdict?.label||"-",e.load?.sustainedMbps??"-",e.load?.rpm??"-",e.load?.shapingRatio??"-",e.gates?.limiting||e.selection?.tunnelReason||"-",e.measurement?.bytesMeasured?`${Math.round(e.measurement.bytesMeasured/1048576)}MB`:"-"]);0!==o.length?(console.log(r(o,["IP","Final","Conserv","Raw","RawCons","Transfer","Stream","Success","Lower95","EligConf","QoEConf","POP","Quality","Verdict","Mbps","RPM","Shaping","Why","Traffic"])),console.log(s.dim("\nMbps is aggregate parallel goodput; RPM is an RPM-style responsiveness estimate from loaded RTT, not the full IETF convergence procedure.")),console.log(s.dim("Gate policy: warn caps final scores at 75 and fail caps them at 45. Raw scores remain visible.")),console.log(s.dim("Ranks are run-relative. EligConf is Wilson/sample evidence; QoEConf reflects tunnel evidence coverage and repeated rounds."))):console.log(s.yellow("No candidates were measured."))}async function E(n,{profile:r}){const c=l(),d=u(c.settingsFile),g=q("quick"===r?x(d):"research"===r?R(d):d,n);if(!e.existsSync(c.secretFile))throw new Error('No configuration stored. Run: cfqoe import "vless://..."');const f=v({level:g.logging.level,directory:c.logs});console.log(`${o()}\n`),console.log(`Run id: ${f.runId}   profile: ${r}\n`);try{const e=await b({vlessUri:i(c.secretFile),settings:g,layout:c,logger:f,runId:f.runId,onProgress:e=>t(e.phase,e)});return a(),e.xray.enabled||(console.log(s.yellow(`Tunnel stage skipped: ${e.xray.reason}`)),"xray_not_found"===e.xray.reason&&console.log(s.dim(y()))),console.log(s.green(`Scan complete. Eligible IPs: ${e.eligibleCount}`)),console.log(`Report:  ${e.jsonPath}`),console.log(`Ranking: ${e.topPath}\n`),P(e.report.results),0}finally{await f.close()}}async function M(n,{resume:r}){const c=l(),d=q(u(c.settingsFile),n);if(!e.existsSync(c.secretFile))throw new Error('No configuration stored. Run: cfqoe import "vless://..."');const g=v({level:d.logging.level,directory:c.logs});console.log(`${o()}\n`),console.log(`${r?"Resuming":"Starting"} hard scan. Run id: ${g.runId}`),console.log(s.dim("Checkpointed mode: press Q or Ctrl+C to stop safely.\n"));try{const e=await k({vlessUri:i(c.secretFile),settings:d,layout:c,logger:g,runId:g.runId,resume:r,onProgress:e=>t(e.phase,e)});return a(),console.log(e.canceled?s.yellow("Hard scan paused safely."):s.green("Hard scan completed.")),console.log(`Report:  ${e.jsonPath}`),console.log(`Ranking: ${e.topPath}\n`),P(e.report.results),0}finally{await g.close()}}export async function main(o=process.argv.slice(2)){const[t="menu",...a]=o;try{switch(t){case"menu":return await $(),0;case"scan":return await E(S(a),{profile:"full"});case"quick":return await E(S(a),{profile:"quick"});case"research":return await E(S(a),{profile:"research"});case"hard":return await M(S(a),{resume:!1});case"resume":return await M(S(a),{resume:!0});case"import":return function(e){if(!e)throw new Error('Usage: cfqoe import "vless://..."');const n=l(),o=f(e);return c(n.secretFile,e),console.log(s.green("Configuration stored locally.")),console.log(JSON.stringify(m(o),null,2)),0}(a[0]);case"check":return await async function(){const n=l(),o=u(n.settingsFile),t=p({configuredPath:o.tunnel.xrayPath,root:n.root}),a=[["Node.js",process.version,Number(process.versions.node.split(".")[0])>=20?"ok":"upgrade to 20+"],["Platform",`${process.platform}-${process.arch}`,"ok"],["Config",e.existsSync(n.secretFile)?"present":"missing",d(n.secretFile)?"protected":"unprotected"],["Verification",o.verification.enabled?"SPRT enabled":"disabled",`limit ${o.verification.limit}`]];if(t.found){const e=await h(t.path);a.push(["Xray",t.path,e.ok?e.version:"not runnable"])}else a.push(["Xray","not found","tunnel stage disabled"]);return console.log(r(a,["Component","Value","Status"])),t.found||console.log(`\n${s.dim(y())}`),0}();case"results":return function(){const o=l(),s=n.join(o.results,"latest.json");if(!e.existsSync(s))throw new Error("No results yet. Run: cfqoe scan");const r=JSON.parse(e.readFileSync(s,"utf8"));return console.log(`Run ${r.runId} finished ${r.finishedAt}\n`),P(r.results),0}();case"diagnose":return function(o){const t=l();let a=o;if(!a){const o=e.readdirSync(t.logs).filter(e=>e.endsWith(".ndjson")).map(o=>({name:o,time:e.statSync(n.join(t.logs,o)).mtimeMs})).sort((e,n)=>n.time-e.time);if(0===o.length)throw new Error("No log files found");a=n.join(t.logs,o[0].name)}const i=w(a);return console.log(`Log: ${a}`),console.log(`Events: ${i.total}  errors: ${i.byLevel.error}  warnings: ${i.byLevel.warn}\n`),i.errors.length>0?console.log(r(i.errors.map(e=>[e.event,e.reason||"-"]),["Event","Reason"])):console.log(s.green("No warnings or errors recorded.")),0}(a[0]);case"help":case"--help":case"-h":return console.log(N),0;default:return console.log(N),console.log(s.yellow(`\nUnknown command: ${t}`)),1}}catch(e){return console.error(`${s.red("Error:")} ${e.message}`),1}}export{S as parseArgs,q as applyOptions,g as saveSettings};
+import fs from "node:fs";
+import path from "node:path";
+import { banner, color, table, writeProgress, clearProgress } from "./ui.js";
+import {
+  ensureDirectories,
+  readSecretFile,
+  writeSecretFile,
+  fileIsProtected,
+} from "./platform/paths.js";
+import { loadSettings, saveSettings } from "./config/settings.js";
+import { parseVlessUri, describeVless } from "./config/vless.js";
+import { locateXray, xrayVersion, xrayInstallHint } from "./platform/xray.js";
+import { createLogger, summarizeLogFile } from "./logging/logger.js";
+import { runScan } from "./scan.js";
+import { runHardScan } from "./hard-scan.js";
+import { runMenu, quickProfile, researchProfile } from "./menu/index.js";
+const HELP_TEXT = `${banner()}\n\n${color.bold("Usage")}\n  cfqoe                     open the interactive menu\n  cfqoe menu                same as above\n  cfqoe scan [options]      run a full scan\n  cfqoe quick [options]     run a reduced scan\n  cfqoe research [options]  run the slow repeated-evidence scan\n  cfqoe hard [options]      run the resumable hard deep scan\n  cfqoe resume [options]    resume the last hard scan\n  cfqoe import <vless-uri>  store the configuration locally\n  cfqoe check               verify Node, Xray and stored configuration\n  cfqoe results             print the latest ranking\n  cfqoe diagnose [file]     summarize a log file\n  cfqoe help                show this help\n\n${color.bold("Scan options")}\n  --max N               maximum candidate IPs (scan/quick only)\n  --rounds N            eligibility rounds\n  --tunnel-limit N      candidates measured through the real tunnel\n  --tunnel-rounds N     observations per candidate\n  --segments N          streaming segments per observation\n  --verify-limit N      finalists sent to independent verification\n  --no-verify           skip independent verification (faster, weaker evidence)\n  --no-retry            skip the delayed retry of transient failures\n  --lowest-variant      use the lowest HLS rendition (conservative fixed mode)\n  --no-tunnel           skip the VLESS tunnel stage\n  --no-browsing         skip web transfer workloads\n  --no-streaming        skip streaming workloads\n  --no-load             skip the real-load stage (multi-megabyte transfer)\n  --load-duration N     seconds of sustained download per observation\n  --load-chunk-mb N     download chunk size in megabytes\n  --load-flows N        parallel download flows used to saturate the link\n  --load-control        also measure a non-Cloudflare control download\n  --gate-profile NAME   gate thresholds: balanced (default), strict, tolerant\n  --xray-path PATH      explicit Xray executable\n  --debug               verbose structured logging\n\n${color.bold("Principle")}\n  TCP connect time is diagnostic only. Ranking uses real WebSocket eligibility with\n  Wilson confidence bounds, adaptive verification, portable web transfer and\n  sequential video segment streaming. Every result carries a confidence label.\n`;
+function parseArgs(args) {
+  const parsed = { flags: new Set(), values: new Map(), positional: [] };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg.startsWith("--")) {
+      parsed.positional.push(arg);
+      continue;
+    }
+    const name = arg.slice(2);
+    if (
+      [
+        "max",
+        "rounds",
+        "tunnel-limit",
+        "tunnel-rounds",
+        "segments",
+        "concurrency",
+        "verify-limit",
+        "load-duration",
+        "load-chunk-mb",
+        "load-flows",
+      ].includes(name) ||
+      "xray-path" === name ||
+      "log-level" === name ||
+      "gate-profile" === name
+    ) {
+      const value = args[index + 1];
+      if (void 0 === value || value.startsWith("--"))
+        throw new Error(`Missing value for --${name}`);
+      (parsed.values.set(name, value), (index += 1));
+    } else parsed.flags.add(name);
+  }
+  return parsed;
+}
+function applyOptions(settings, parsed) {
+  const updated = JSON.parse(JSON.stringify(settings)),
+    numberOption = (name) => {
+      const raw = parsed.values.get(name);
+      if (void 0 === raw) return null;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value <= 0)
+        throw new Error(`--${name} must be a positive number`);
+      return value;
+    },
+    max = numberOption("max");
+  max && (updated.scan.maxCandidates = max);
+  const rounds = numberOption("rounds");
+  rounds && (updated.scan.rounds = rounds);
+  const concurrency = numberOption("concurrency");
+  concurrency && (updated.scan.concurrency = concurrency);
+  const tunnelLimit = numberOption("tunnel-limit");
+  tunnelLimit && (updated.tunnel.limit = tunnelLimit);
+  const tunnelRounds = numberOption("tunnel-rounds");
+  tunnelRounds && (updated.tunnel.rounds = tunnelRounds);
+  const segments = numberOption("segments");
+  segments && (updated.streaming.maxSegments = segments);
+  const verifyLimit = numberOption("verify-limit");
+  (verifyLimit && (updated.verification.limit = verifyLimit),
+    parsed.flags.has("no-verify") && (updated.verification.enabled = !1),
+    parsed.flags.has("no-retry") &&
+      ((updated.scan.delayedRetry.enabled = !1),
+      (updated.hard.delayedRetry = !1)),
+    (parsed.flags.has("lowest-variant") || parsed.flags.has("abr")) &&
+      (updated.streaming.variantMode = "lowest"),
+    parsed.flags.has("no-tunnel") && (updated.tunnel.enabled = !1),
+    parsed.flags.has("no-browsing") && (updated.browsing.enabled = !1),
+    parsed.flags.has("no-streaming") && (updated.streaming.enabled = !1),
+    parsed.flags.has("no-load") && (updated.load.enabled = !1));
+  const loadDuration = numberOption("load-duration");
+  loadDuration && (updated.load.durationMs = 1e3 * loadDuration);
+  const loadChunkMb = numberOption("load-chunk-mb");
+  loadChunkMb && (updated.load.chunkBytes = 1024 * loadChunkMb * 1024);
+  const loadFlows = numberOption("load-flows");
+  if (
+    (loadFlows && (updated.load.flows = Math.min(Math.round(loadFlows), 16)),
+    parsed.flags.has("load-control") &&
+      (updated.load.control = { ...updated.load.control, enabled: !0 }),
+    parsed.values.has("gate-profile"))
+  ) {
+    const gateProfile = parsed.values.get("gate-profile");
+    if (!["balanced", "strict", "tolerant"].includes(gateProfile))
+      throw new Error("--gate-profile must be balanced, strict or tolerant");
+    updated.load.gateProfile = gateProfile;
+  }
+  return (
+    parsed.values.has("xray-path") &&
+      (updated.tunnel.xrayPath = parsed.values.get("xray-path")),
+    parsed.flags.has("debug") && (updated.logging.level = "debug"),
+    parsed.values.has("log-level") &&
+      (updated.logging.level = parsed.values.get("log-level")),
+    updated
+  );
+}
+function printResults(results, limit = 15) {
+  const rows = results
+    .slice(0, limit)
+    .map((result) => [
+      result.ip,
+      result.scores.overall ?? "-",
+      result.scores.conservative ?? "-",
+      result.scores.overallUncapped ?? "-",
+      result.scores.conservativeUncapped ?? "-",
+      result.scores.browsing ?? "-",
+      result.scores.streaming ?? "-",
+      `${Math.round(100 * (result.eligibility.successRate || 0))}%`,
+      result.scores.reliabilityLower95 ?? "-",
+      result.eligibility.confidence || "-",
+      result.measurement?.qoeConfidence || "-",
+      result.eligibility.pops?.dominant || "-",
+      result.streaming?.quality || "-",
+      result.verdict?.label || "-",
+      result.load?.sustainedMbps ?? "-",
+      result.load?.rpm ?? "-",
+      result.load?.shapingRatio ?? "-",
+      result.gates?.limiting || result.selection?.tunnelReason || "-",
+      result.measurement?.bytesMeasured
+        ? `${Math.round(result.measurement.bytesMeasured / 1048576)}MB`
+        : "-",
+    ]);
+  0 !== rows.length
+    ? (console.log(
+        table(rows, [
+          "IP",
+          "Final",
+          "Conserv",
+          "Raw",
+          "RawCons",
+          "Transfer",
+          "Stream",
+          "Success",
+          "Lower95",
+          "EligConf",
+          "QoEConf",
+          "POP",
+          "Quality",
+          "Verdict",
+          "Mbps",
+          "RPM",
+          "Shaping",
+          "Why",
+          "Traffic",
+        ]),
+      ),
+      console.log(
+        color.dim(
+          "\nMbps is aggregate parallel goodput; RPM is an RPM-style responsiveness estimate from loaded RTT, not the full IETF convergence procedure.",
+        ),
+      ),
+      console.log(
+        color.dim(
+          "Gate policy: warn caps final scores at 75 and fail caps them at 45. Raw scores remain visible.",
+        ),
+      ),
+      console.log(
+        color.dim(
+          "Ranks are run-relative. EligConf is Wilson/sample evidence; QoEConf reflects tunnel evidence coverage and repeated rounds.",
+        ),
+      ))
+    : console.log(color.yellow("No candidates were measured."));
+}
+async function runScanCommand(parsed, { profile }) {
+  const layout = ensureDirectories(),
+    baseSettings = loadSettings(layout.settingsFile),
+    settings = applyOptions(
+      "quick" === profile
+        ? quickProfile(baseSettings)
+        : "research" === profile
+          ? researchProfile(baseSettings)
+          : baseSettings,
+      parsed,
+    );
+  if (!fs.existsSync(layout.secretFile))
+    throw new Error('No configuration stored. Run: cfqoe import "vless://..."');
+  const logger = createLogger({
+    level: settings.logging.level,
+    directory: layout.logs,
+  });
+  (console.log(`${banner()}\n`),
+    console.log(`Run id: ${logger.runId}   profile: ${profile}\n`));
+  try {
+    const result = await runScan({
+      vlessUri: readSecretFile(layout.secretFile),
+      settings,
+      layout,
+      logger,
+      runId: logger.runId,
+      onProgress: (progress) => writeProgress(progress.phase, progress),
+    });
+    return (
+      clearProgress(),
+      result.xray.enabled ||
+        (console.log(
+          color.yellow(`Tunnel stage skipped: ${result.xray.reason}`),
+        ),
+        "xray_not_found" === result.xray.reason &&
+          console.log(color.dim(xrayInstallHint()))),
+      console.log(
+        color.green(`Scan complete. Eligible IPs: ${result.eligibleCount}`),
+      ),
+      console.log(`Report:  ${result.jsonPath}`),
+      console.log(`Ranking: ${result.topPath}\n`),
+      printResults(result.report.results),
+      0
+    );
+  } finally {
+    await logger.close();
+  }
+}
+async function runHardCommand(parsed, { resume }) {
+  const layout = ensureDirectories(),
+    settings = applyOptions(loadSettings(layout.settingsFile), parsed);
+  if (!fs.existsSync(layout.secretFile))
+    throw new Error('No configuration stored. Run: cfqoe import "vless://..."');
+  const logger = createLogger({
+    level: settings.logging.level,
+    directory: layout.logs,
+  });
+  (console.log(`${banner()}\n`),
+    console.log(
+      `${resume ? "Resuming" : "Starting"} hard scan. Run id: ${logger.runId}`,
+    ),
+    console.log(
+      color.dim("Checkpointed mode: press Q or Ctrl+C to stop safely.\n"),
+    ));
+  try {
+    const result = await runHardScan({
+      vlessUri: readSecretFile(layout.secretFile),
+      settings,
+      layout,
+      logger,
+      runId: logger.runId,
+      resume,
+      onProgress: (progress) => writeProgress(progress.phase, progress),
+    });
+    return (
+      clearProgress(),
+      console.log(
+        result.canceled
+          ? color.yellow("Hard scan paused safely.")
+          : color.green("Hard scan completed."),
+      ),
+      console.log(`Report:  ${result.jsonPath}`),
+      console.log(`Ranking: ${result.topPath}\n`),
+      printResults(result.report.results),
+      0
+    );
+  } finally {
+    await logger.close();
+  }
+}
+export async function main(argv = process.argv.slice(2)) {
+  const [command = "menu", ...rest] = argv;
+  try {
+    switch (command) {
+      case "menu":
+        return (await runMenu(), 0);
+      case "scan":
+        return await runScanCommand(parseArgs(rest), { profile: "full" });
+      case "quick":
+        return await runScanCommand(parseArgs(rest), { profile: "quick" });
+      case "research":
+        return await runScanCommand(parseArgs(rest), { profile: "research" });
+      case "hard":
+        return await runHardCommand(parseArgs(rest), { resume: !1 });
+      case "resume":
+        return await runHardCommand(parseArgs(rest), { resume: !0 });
+      case "import":
+        return (function (uri) {
+          if (!uri) throw new Error('Usage: cfqoe import "vless://..."');
+          const layout = ensureDirectories(),
+            config = parseVlessUri(uri);
+          return (
+            writeSecretFile(layout.secretFile, uri),
+            console.log(color.green("Configuration stored locally.")),
+            console.log(JSON.stringify(describeVless(config), null, 2)),
+            0
+          );
+        })(rest[0]);
+      case "check":
+        return await (async function () {
+          const layout = ensureDirectories(),
+            settings = loadSettings(layout.settingsFile),
+            xray = locateXray({
+              configuredPath: settings.tunnel.xrayPath,
+              root: layout.root,
+            }),
+            rows = [
+              [
+                "Node.js",
+                process.version,
+                Number(process.versions.node.split(".")[0]) >= 20
+                  ? "ok"
+                  : "upgrade to 20+",
+              ],
+              ["Platform", `${process.platform}-${process.arch}`, "ok"],
+              [
+                "Config",
+                fs.existsSync(layout.secretFile) ? "present" : "missing",
+                fileIsProtected(layout.secretFile)
+                  ? "protected"
+                  : "unprotected",
+              ],
+              [
+                "Verification",
+                settings.verification.enabled ? "SPRT enabled" : "disabled",
+                `limit ${settings.verification.limit}`,
+              ],
+            ];
+          if (xray.found) {
+            const version = await xrayVersion(xray.path);
+            rows.push([
+              "Xray",
+              xray.path,
+              version.ok ? version.version : "not runnable",
+            ]);
+          } else rows.push(["Xray", "not found", "tunnel stage disabled"]);
+          return (
+            console.log(table(rows, ["Component", "Value", "Status"])),
+            xray.found || console.log(`\n${color.dim(xrayInstallHint())}`),
+            0
+          );
+        })();
+      case "results":
+        return (function () {
+          const layout = ensureDirectories(),
+            latestFile = path.join(layout.results, "latest.json");
+          if (!fs.existsSync(latestFile))
+            throw new Error("No results yet. Run: cfqoe scan");
+          const report = JSON.parse(fs.readFileSync(latestFile, "utf8"));
+          return (
+            console.log(`Run ${report.runId} finished ${report.finishedAt}\n`),
+            printResults(report.results),
+            0
+          );
+        })();
+      case "diagnose":
+        return (function (file) {
+          const layout = ensureDirectories();
+          let target = file;
+          if (!target) {
+            const files = fs
+              .readdirSync(layout.logs)
+              .filter((name) => name.endsWith(".ndjson"))
+              .map((name) => ({
+                name,
+                time: fs.statSync(path.join(layout.logs, name)).mtimeMs,
+              }))
+              .sort((left, right) => right.time - left.time);
+            if (0 === files.length) throw new Error("No log files found");
+            target = path.join(layout.logs, files[0].name);
+          }
+          const summary = summarizeLogFile(target);
+          return (
+            console.log(`Log: ${target}`),
+            console.log(
+              `Events: ${summary.total}  errors: ${summary.byLevel.error}  warnings: ${summary.byLevel.warn}\n`,
+            ),
+            summary.errors.length > 0
+              ? console.log(
+                  table(
+                    summary.errors.map((entry) => [
+                      entry.event,
+                      entry.reason || "-",
+                    ]),
+                    ["Event", "Reason"],
+                  ),
+                )
+              : console.log(color.green("No warnings or errors recorded.")),
+            0
+          );
+        })(rest[0]);
+      case "help":
+      case "--help":
+      case "-h":
+        return (console.log(HELP_TEXT), 0);
+      default:
+        return (
+          console.log(HELP_TEXT),
+          console.log(color.yellow(`\nUnknown command: ${command}`)),
+          1
+        );
+    }
+  } catch (error) {
+    return (console.error(`${color.red("Error:")} ${error.message}`), 1);
+  }
+}
+export { parseArgs, applyOptions, saveSettings };
