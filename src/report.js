@@ -663,6 +663,7 @@ export function rankCandidates(candidates) {
 export function writeReport({
   directory,
   runId,
+  mode,
   target,
   settings,
   candidates,
@@ -677,6 +678,7 @@ export function writeReport({
       scoreLabel: "Experimental CFQoE Score",
       scope: "run-relative",
       runId,
+      mode,
       startedAt,
       finishedAt: new Date().toISOString(),
       platform: `${process.platform}-${process.arch}`,

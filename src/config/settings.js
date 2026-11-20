@@ -318,6 +318,14 @@ export function migrateSettings(input, platform = process.platform) {
   merged.migratedFrom = version;
   return merged;
 }
+// The fallback settings must be an isolated deep copy: mergeSettings
+// is a shallow merge, so returning it over DEFAULT_SETTINGS would
+// hand every caller the defaults' own nested objects — one caller's
+// in-place edit (a profile transform, a calibration verdict) would
+// silently rewrite the defaults for the whole process.
+function defaultSettingsCopy() {
+  return structuredClone(DEFAULT_SETTINGS);
+}
 export function loadSettings(filePath, { logger } = {}) {
   // The optional logger is the entry points' bootstrap logger, created
   // before any settings exist. Without it this function is structurally
@@ -328,7 +336,7 @@ export function loadSettings(filePath, { logger } = {}) {
     raw = fs.readFileSync(filePath, "utf8");
   } catch {
     logger?.info?.("settings.loaded", { source: "defaults", reason: "no-file" });
-    return mergeSettings(DEFAULT_SETTINGS, {});
+    return defaultSettingsCopy();
   }
   try {
     const settings = migrateSettings(JSON.parse(raw));
@@ -347,7 +355,7 @@ export function loadSettings(filePath, { logger } = {}) {
       source: "defaults",
       error: { class: "settings_load", message: error.message },
     });
-    return mergeSettings(DEFAULT_SETTINGS, {});
+    return defaultSettingsCopy();
   }
 }
 export function saveSettings(filePath, settings) {

@@ -1244,3 +1244,85 @@ test("run failure: a run whose engine throws ends in run-state failed, with run.
     await api.stop("test");
   }
 });
+
+test("hard stop → resume adopts the checkpoint runId: response, terminal state, report, results API and log all carry the original id", async () => {
+  const blackholeSockets = new Set();
+  const blackhole = net.createServer((socket) => {
+    blackholeSockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => blackholeSockets.delete(socket));
+  });
+  await new Promise((resolve) => blackhole.listen(18444, "0.0.0.0", resolve));
+  const ranges = [];
+  for (let i = 0; i < 300; i += 1) ranges.push(`127.${(i >> 8) & 255}.${i & 255}.0/24`);
+  const { layout } = makeLayout({ rangesText: `${ranges.join("\n")}\n` });
+  const testSettings = loadSettings(layout.settingsFile);
+  testSettings.calibration.enabled = false;
+  testSettings.scan.timeoutMs = 400;
+  saveSettings(layout.settingsFile, testSettings);
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const post = (requestPath, body) =>
+      rawRequest({ port, method: "POST", path: requestPath, headers: mutation(cookie), body: JSON.stringify(body) });
+    const snapshot = async () =>
+      JSON.parse((await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body);
+    const waitForPaused = async (runId) => {
+      for (let attempt = 0; attempt < 160; attempt += 1) {
+        const snap = await snapshot();
+        if (snap.run && snap.run.status === "paused-done" && snap.run.runId === runId) return snap;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error(`run ${runId} did not settle as paused-done`);
+    };
+
+    assert.equal(
+      (await post("/api/config", { uri: `vless://${TEST_UUID}@edge.example.com:18444?encryption=none&security=none&type=ws&host=edge.example.com&path=%2Fws#test` })).status,
+      200,
+    );
+    // First run: start Hard, stop it, let it settle as paused-done.
+    const started = await post("/api/run", { mode: "hard" });
+    assert.equal(started.status, 200);
+    const { runId: originalId } = JSON.parse(started.body);
+    assert.equal((await post("/api/run/stop", {})).status, 200);
+    await waitForPaused(originalId);
+
+    // Resume: the response must name the checkpoint's id — the run
+    // keeps its identity instead of minting a second one.
+    let resumed = null;
+    for (let attempt = 0; attempt < 40 && !resumed; attempt += 1) {
+      const res = await post("/api/run", { mode: "hard", resume: true });
+      if (res.status === 200) resumed = res;
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(resumed, "the resume start was accepted");
+    assert.equal(JSON.parse(resumed.body).runId, originalId, "the resumed run adopts the checkpoint runId");
+
+    // Stop the resumed run; the terminal state keeps the same id.
+    assert.equal((await post("/api/run/stop", {})).status, 200);
+    const terminal = await waitForPaused(originalId);
+    assert.equal(terminal.run.runId, originalId);
+
+    // The report is filed under that one id and the results API
+    // serves it — the pre-fix split (snapshot id ≠ report id) 404'd.
+    const resultRes = await rawRequest({ port, path: `/api/results/${originalId}`, headers: authed(cookie) });
+    assert.equal(resultRes.status, 200, "the terminal snapshot's id resolves to its report");
+    assert.equal(JSON.parse(resultRes.body).runId, originalId);
+
+    // And the resumed run's records live in the original run's log
+    // file, under the original envelope id — one run, one story.
+    const records = fs
+      .readFileSync(path.join(layout.logs, `run-${originalId}.ndjson`), "utf8")
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line));
+    const resumeStart = records.find((record) => record.event === "run.start" && record.resume === true);
+    assert.ok(resumeStart, "the resumed run's run.start is in the original run's log file");
+    assert.equal(resumeStart.runId, originalId);
+    assert.equal(records.filter((record) => record.event === "run.start").length, 2, "both starts belong to the one run id");
+  } finally {
+    await api.stop("test");
+    for (const socket of blackholeSockets) socket.destroy();
+    await new Promise((resolve) => blackhole.close(resolve));
+  }
+});

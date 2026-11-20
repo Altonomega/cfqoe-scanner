@@ -323,6 +323,18 @@ async function runDelayedRetries({
 export function hasHardScanState(layout) {
   return stateExists(layout);
 }
+export function readHardCheckpointRunId(layout) {
+  // The identity a resumed run adopts: the checkpoint's own runId,
+  // which the engine files the run's report under. Unreadable or
+  // malformed state yields null and the caller falls back to a
+  // fresh id.
+  try {
+    const saved = JSON.parse(fs.readFileSync(layout.hardStateFile, "utf8"));
+    return typeof saved?.runId === "string" && saved.runId ? saved.runId : null;
+  } catch {
+    return null;
+  }
+}
 export async function runHardScan({
   vlessUri,
   settings,
@@ -526,17 +538,19 @@ export async function runHardScan({
       requestedConcurrency,
       timeoutMs: settings.scan.timeoutMs,
       signal,
-      // Ladder positions ride the calibrating phase's own progress
-      // channel: completed/total become levels measured / ladder
+      // Hunt attempts and ladder positions ride the calibrating
+      // phase's own progress channel: completed/total become
+      // attempts made / hunt size, then levels measured / ladder
       // size, so the consoles count calibration instead of watching
       // a silent minute.
-      onProgress: ({ completed, total, level }) =>
+      onProgress: ({ completed, total, level, hunt }) =>
         emitProgress(
           {
             phase: "calibrating",
             completed,
             total,
             ...(level != null ? { level } : {}),
+            ...(hunt ? { hunt: true } : {}),
           },
           "calibrating",
         ),

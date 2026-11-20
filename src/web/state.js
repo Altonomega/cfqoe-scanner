@@ -694,6 +694,26 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     return lastRun;
   }
 
+  // The resume facts for the at-rest dashboard/genome line, read
+  // from the checkpoint itself — never from the live-run view, whose
+  // phase/counters belong to a run in flight and sit empty at rest
+  // (the 0.9.1 line rendered the checkpoint's raw phase key and 0
+  // probes). The phase is the checkpoint's stored string, verbatim;
+  // probesSpent is its stored total (the engine totals, falling back
+  // to the stored primer + expansion counts). Present only when no
+  // run is active and a checkpoint exists.
+  function checkpointResume() {
+    if (run) return null;
+    const saved = tracker.checkpoint();
+    if (!saved) return null;
+    return {
+      phase: saved.phase ?? null,
+      probesSpent:
+        saved.blockState?.totals?.probesSpent ??
+        (saved.counts?.primerProbes ?? 0) + (saved.counts?.expansionProbes ?? 0),
+    };
+  }
+
   function pausedRunView() {
     const saved = tracker.checkpoint();
     if (!saved || saved.status !== "paused") return null;
@@ -867,6 +887,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     buildSnapshot(statusFacts) {
       const genome = tracker.vectors();
       const view = run ?? restRunView();
+      const resume = checkpointResume();
       return {
         server: {
           version: VERSION,
@@ -887,6 +908,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
               ...(view.mode === "hard" ? { genome, top: tracker.topList() } : {}),
             }
           : null,
+        ...(resume ? { resume } : {}),
         latest: readLatest(),
       };
     },

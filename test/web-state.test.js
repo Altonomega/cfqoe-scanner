@@ -135,6 +135,34 @@ test("trace: summaries hand the store real probe points — successes plot their
   );
 });
 
+test("D3: at rest the snapshot carries the checkpoint's own resume facts — verbatim phase, stored probes spent", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cfqoe-state-test-"));
+  const layout = ensureDirectories(root);
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.copyFileSync(RANGES_FILE, layout.rangesFile);
+  const state = createWebState({ layout });
+  // No checkpoint on disk: the field is absent, not null-padded.
+  assert.ok(!("resume" in state.buildSnapshot(FACTS)), "no checkpoint, no resume field");
+  const checkpoint = {
+    version: 4,
+    runId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    status: "paused",
+    phase: "primer",
+    counts: { tested: 10, eligible: 2, failed: 8, primerProbes: 500, expansionProbes: 200, blocksPrimed: 3, blocksExpanded: 0 },
+    blockState: { version: 1, totals: { probesSpent: 777, primerProbes: 500, expansionProbes: 277 }, blocks: [] },
+  };
+  fs.writeFileSync(layout.hardStateFile, JSON.stringify(checkpoint));
+  const snap = state.buildSnapshot(FACTS);
+  assert.deepEqual(
+    snap.resume,
+    { phase: "primer", probesSpent: 777 },
+    "the checkpoint's stored phase string verbatim and its stored total — not the live view's empty fields, not a recomputed sum",
+  );
+  // While a run is active the field steps aside: it describes rest.
+  state.beginRun({ mode: "hard", runId: "live-run", settings: {} });
+  assert.ok(!("resume" in state.buildSnapshot(FACTS)), "an active run suppresses the at-rest resume field");
+});
+
 test("trace: no observations, no points — and finishRun flushes the tail before the terminal run-state", () => {
   const state = makeState();
   const frames = [];
