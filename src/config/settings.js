@@ -110,8 +110,8 @@ export function createDefaultSettings(platform = process.platform) {
       delayedRetry: true,
       retryLimit: isAndroid ? 1e3 : 5e3,
       // Block-adaptive engine (DNA redesign): these keys are read only when
-      // engine is "blocks"; while it stays "round-robin" they are inert.
-      engine: "round-robin",
+      // engine is "blocks" (the default); under "round-robin" they are inert.
+      engine: "blocks",
       primerPerBlock: 3,
       budgetProbes: isAndroid ? 4e4 : 72e3,
       banditExploration: 1,
