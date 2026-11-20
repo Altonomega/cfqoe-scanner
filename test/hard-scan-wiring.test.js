@@ -607,3 +607,99 @@ test(
     }
   },
 );
+
+test(
+  'stop during calibration: the run lands canceled fast, with no calibration verdict in the journal',
+  { timeout: 30000 },
+  async () => {
+    const layout = tempLayout(RANGES);
+    const settings = makeSettings({ engine: 'round-robin' });
+    settings.calibration.enabled = true;
+    const records = [];
+    const logger = {
+      info: (event, data) => records.push({ level: 'info', event, data }),
+      warn: (event, data) => records.push({ level: 'warn', event, data }),
+      debug: () => {},
+      error: (event, data) => records.push({ level: 'error', event, data }),
+    };
+    const controller = new AbortController();
+    let taskCalls = 0;
+    // A calibration probe that never answers: without the abort
+    // threading this run could not settle at all.
+    const hangingTask = () => {
+      taskCalls += 1;
+      return new Promise(() => {});
+    };
+    const startedAt = Date.now();
+    const run = runHardScan({
+      vlessUri: VLESS_URI,
+      settings,
+      layout,
+      logger,
+      runId: 'wiring-calib-abort',
+      signal: controller.signal,
+      task: hangingTask,
+    });
+    setTimeout(() => controller.abort(), 150);
+    const result = await run;
+    const elapsed = Date.now() - startedAt;
+    assert.ok(
+      elapsed < 10000,
+      `run settled in ${elapsed}ms despite a calibration probe that never answers`,
+    );
+    assert.equal(result.canceled, true);
+    assert.equal(result.stoppedReason, 'canceled');
+    assert.ok(taskCalls >= 1, 'calibration actually started probing');
+    assert.equal(
+      records.some((record) => record.event === 'hard.calibration'),
+      false,
+      'no calibration verdict is logged for an aborted calibration',
+    );
+    assert.equal(
+      records.some((record) => record.event === 'hard.calibration.no_control'),
+      false,
+      'an abort is not a no-control outcome',
+    );
+    assert.equal(
+      hasHardScanState(layout),
+      true,
+      'the stopped run keeps its resumable checkpoint',
+    );
+  },
+);
+
+test(
+  'summary observers receive the real observations behind each summary',
+  { timeout: 60000 },
+  async () => {
+    const layout = tempLayout(RANGES);
+    const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
+    const seen = [];
+    const result = await runHardScan({
+      vlessUri: VLESS_URI,
+      settings: makeSettings({ engine: 'blocks', budgetProbes: 400 }),
+      layout,
+      logger: silentLogger,
+      runId: 'wiring-summary-observations',
+      task: catalog.task,
+      onSummary: (summary, observations) => seen.push({ summary, observations }),
+    });
+    assert.equal(result.canceled, false);
+    assert.ok(seen.length > 0, 'summaries were observed');
+    let totalAttempts = 0;
+    for (const { summary, observations } of seen) {
+      assert.ok(Array.isArray(observations), 'observations ride with the summary');
+      assert.equal(
+        observations.length,
+        summary.eligibility.attempts,
+        'one observation per attempt the summary aggregates',
+      );
+      for (const observation of observations) {
+        assert.equal(typeof observation.ok, 'boolean');
+        if (observation.ok) assert.equal(typeof observation.handshakeMs, 'number');
+      }
+      totalAttempts += observations.length;
+    }
+    assert.ok(totalAttempts > 0, 'real probes were observed');
+  },
+);

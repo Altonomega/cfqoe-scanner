@@ -94,7 +94,7 @@ export function createRunManager({ layout, state, webLog }) {
             resume: Boolean(resume),
             signal: controller.signal,
             onProgress,
-            onSummary: (summary) => state.onSummary(summary),
+            onSummary: (summary, observations) => state.onSummary(summary, observations),
           });
         } else {
           const profile =
@@ -156,7 +156,7 @@ export function createRunManager({ layout, state, webLog }) {
         // The client shows its failure notice on this status, and
         // the failure itself is on record in run.end and the log.
         state.ticker("Run failed — see Diagnostics for the log.");
-        state.finishRun({ status: "failed", mode, runId, report: null });
+        state.finishRun({ status: "failed", mode, runId, report: null, error: error.message });
         throw error;
       } finally {
         await logger.close();

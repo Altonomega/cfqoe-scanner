@@ -28,6 +28,7 @@ import {
 } from "./report.js";
 import { resolveWorkloads, loadCatalog } from "./config/settings.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
+import { isAbortError } from "./measurement/abort.js";
 import { createProgressRecorder } from "./logging/logger.js";
 function successRate(observations) {
   return observations.length
@@ -86,17 +87,39 @@ export async function runScan({
       perRange: effectiveSettings.scan.perRange,
       max: effectiveSettings.scan.maxCandidates,
       seed,
-    }),
-    calibration = isCanceled()
-      ? null
-      : await calibrateWebsocketConcurrency({
-      candidates,
-      vless,
-      calibration: effectiveSettings.calibration,
-      requestedConcurrency: effectiveSettings.scan.concurrency,
-      timeoutMs: effectiveSettings.scan.timeoutMs,
-      seed,
     });
+  let calibration = null;
+  if (!isCanceled()) {
+    try {
+      calibration = await calibrateWebsocketConcurrency({
+        candidates,
+        vless,
+        calibration: effectiveSettings.calibration,
+        requestedConcurrency: effectiveSettings.scan.concurrency,
+        timeoutMs: effectiveSettings.scan.timeoutMs,
+        seed,
+        signal,
+        // Ladder positions ride the calibrating phase's own progress
+        // channel: completed/total become levels measured / ladder
+        // size, so the consoles count calibration instead of
+        // watching a silent minute.
+        onProgress: ({ completed, total, level }) =>
+          emitProgress({
+            phase: "calibrating",
+            completed,
+            total,
+            ...(level != null ? { level } : {}),
+          }),
+      });
+    } catch (error) {
+      // A stop that lands mid-calibration is not a calibration
+      // outcome: no verdict was measured, so — exactly as when the
+      // stop lands before calibration — none is applied or logged
+      // below, and the run ends canceled through the normal path.
+      if (!isAbortError(error) || !isCanceled()) throw error;
+      calibration = null;
+    }
+  }
   // A run canceled before calibration keeps the configured settings
   // verbatim: no verdict was measured, so none is applied or logged.
   effectiveSettings = calibration
@@ -167,8 +190,8 @@ export async function runScan({
           observation
         );
       },
-      onProgress: ({ completed, total }) =>
-        emitProgress({ phase: "screening", completed, total }),
+      onProgress: ({ completed, total, round, item }) =>
+        emitProgress({ phase: "screening", completed, total, round, ip: item?.ip }),
     }),
     observationsByIp = new Map(
       screeningResults.map((result) => [result.item.ip, result.observations]),
@@ -201,8 +224,8 @@ export async function runScan({
             timeoutMs: effectiveSettings.scan.timeoutMs,
           }),
         isCanceled,
-        onCandidateDone: ({ finished, total }) =>
-          emitProgress({ phase: "delayed-retry", completed: finished, total }),
+        onCandidateDone: ({ finished, total, candidate }) =>
+          emitProgress({ phase: "delayed-retry", completed: finished, total, ip: candidate?.ip }),
       });
       for (const result of retryResults)
         observationsByIp.get(result.candidate.ip).push(...result.observations);
@@ -253,12 +276,13 @@ export async function runScan({
           timeoutMs: effectiveSettings.scan.timeoutMs,
         }),
       isCanceled,
-      onCandidateDone: ({ finished, total, decision }) =>
+      onCandidateDone: ({ finished, total, decision, candidate }) =>
         emitProgress({
           phase: "verification",
           completed: finished,
           total,
           note: decision,
+          ip: candidate?.ip,
         }),
     });
     for (const result of verificationResults)
@@ -421,6 +445,7 @@ export async function runScan({
               completed: completedCount,
               total: totalCount,
               note: `web transfer · ${candidate.ip}`,
+              ip: candidate.ip,
             });
             for (const workload of browsingWorkloads) {
               const browsingResult = await probeBrowsing({
@@ -454,6 +479,7 @@ export async function runScan({
               completed: completedCount,
               total: totalCount,
               note: `streaming · ${candidate.ip}`,
+              ip: candidate.ip,
             });
             for (const workload of streamingWorkloads) {
               const streamingResult = await probeStreaming({
@@ -493,6 +519,7 @@ export async function runScan({
                 completed: completedCount,
                 total: totalCount,
                 note: `real load · ${candidate.ip}`,
+              ip: candidate.ip,
               });
               const loadResult = await runLoadProbe({
                 proxy: xrayHandle.socks,

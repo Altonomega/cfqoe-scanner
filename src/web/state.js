@@ -31,10 +31,28 @@ import { VERSION } from "../version.js";
 const BLOCK_FLUSH_MS = 250;
 const COUNTER_FLUSH_MS = 1000;
 const LOG_FLUSH_MS = 500;
+const TRACE_FLUSH_MS = 250;
+const TRACE_BUFFER_LIMIT = 1000;
 const LOG_QUEUE_LIMIT = 200;
 const LOG_REPLAY_LIMIT = 200;
 const TICKER_LIMIT = 40;
 const TOP_LIMIT = 30;
+
+// One chromatogram point for one real probe observation, in the
+// client's [outcome, ms] shape: a success plots its measured
+// handshake (bar height grows as the handshake shrinks — the canvas's
+// "height = speed"); a failure is a timeout or an error stub and
+// carries no figure, because none was measured. A success without a
+// measured handshake plots nothing rather than an invented height.
+function tracePointFor(observation) {
+  if (!observation) return null;
+  if (observation.ok) {
+    return Number.isFinite(observation.handshakeMs)
+      ? ["ok", Math.round(observation.handshakeMs)]
+      : null;
+  }
+  return [/timeout/i.test(String(observation.error ?? "")) ? "timeout" : "error", 0];
+}
 
 function encodeBase64(bytes) {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
@@ -462,6 +480,13 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   let seq = 0;
   const clients = new Set();
   let run = null; // { mode, runId, status, phase, startedAt, counters }
+  // The most recent finished run's terminal view. Without it the
+  // at-rest snapshot had nothing truthful to say about a scan-mode
+  // run that just ended (run = null read as "idle"), so the event
+  // stream and the snapshot disagreed about the same run — the
+  // banner-resurrection defect. Event, snapshot and API now all
+  // serve this same terminal status until a new run begins.
+  let lastRun = null; // { mode, runId, status, phase, startedAt, counters, error? }
   let phaseStartedAt = null;
   let tickerLines = [];
   let tickerWindow = [];
@@ -472,6 +497,10 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   let counterTimer = null;
   let logTimer = null;
   let countersDirty = false;
+  // Chromatogram points awaiting their flush, built only from real
+  // probe observations handed up with eligibility summaries.
+  let tracePoints = [];
+  let traceTimer = null;
 
   function nextSeq() {
     seq += 1;
@@ -531,6 +560,28 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     if (typeof counterTimer.unref === "function") counterTimer.unref();
   }
 
+  function flushTrace() {
+    traceTimer = null;
+    if (tracePoints.length === 0) return;
+    const points = tracePoints;
+    tracePoints = [];
+    emit("trace", { points });
+  }
+
+  function scheduleTrace() {
+    if (traceTimer) return;
+    traceTimer = setTimeout(flushTrace, TRACE_FLUSH_MS);
+    if (typeof traceTimer.unref === "function") traceTimer.unref();
+  }
+
+  function resetTrace() {
+    tracePoints = [];
+    if (traceTimer) {
+      clearTimeout(traceTimer);
+      traceTimer = null;
+    }
+  }
+
   function pushTicker(text) {
     if (!text) return;
     const now = Date.now();
@@ -542,13 +593,20 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     emit("ticker", { text });
   }
 
-  function queueLog(record) {
-    const payload = {
+  function logPayload(record) {
+    return {
       time: record.time,
       level: record.level,
       event: record.event,
       msg: record.message ?? record.note ?? "",
+      // The one datum the narration needs from a log record: the
+      // concurrency a calibration verdict left the run at.
+      n: record.requestedConcurrency ?? record.selectedConcurrency ?? null,
     };
+  }
+
+  function queueLog(record) {
+    const payload = logPayload(record);
     for (const client of clients) {
       if (!client.wantsTail) continue;
       client.logQueue.push(payload);
@@ -627,8 +685,16 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   }
 
   // The at-rest run view: a paused Hard checkpoint is presented as a
-  // finished-but-resumable run (CONTRACT §1), everything else idle.
+  // finished-but-resumable run (CONTRACT §1); otherwise the last
+  // finished run's terminal view, so a stopped or failed scan run
+  // keeps its real status at rest instead of decaying to idle.
   function restRunView() {
+    const paused = pausedRunView();
+    if (paused) return paused;
+    return lastRun;
+  }
+
+  function pausedRunView() {
     const saved = tracker.checkpoint();
     if (!saved || saved.status !== "paused") return null;
     return {
@@ -663,16 +729,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
         );
         if (client.wantsTail && attachedLogger) {
           for (const record of attachedLogger.recent(LOG_REPLAY_LIMIT)) {
-            client.send(
-              "log",
-              {
-                time: record.time,
-                level: record.level,
-                event: record.event,
-                msg: record.message ?? record.note ?? "",
-              },
-              peekSeq(),
-            );
+            client.send("log", logPayload(record), peekSeq());
           }
         }
       } catch {
@@ -697,6 +754,8 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
       attachedLogger = null;
     },
     beginRun({ mode, runId, settings }) {
+      lastRun = null;
+      resetTrace();
       run = {
         mode,
         runId,
@@ -728,18 +787,39 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
         eligible: progress.eligible ?? run.counters.eligible ?? 0,
         failed: progress.failed ?? run.counters.failed ?? 0,
         elapsedMs: progress.elapsedMs ?? run.counters.elapsedMs ?? 0,
+        // Narration fields: which screening round is in flight and
+        // which candidate the newest progress event belongs to, so
+        // the console can say what is happening right now instead of
+        // only how much is done. Absent outside the phases that know.
+        round: progress.round ?? run.counters.round ?? null,
+        currentIp: progress.ip ?? progress.item?.ip ?? run.counters.currentIp ?? null,
         ...(run.mode === "hard" ? tracker.counters() : {}),
       };
       if (progress.note) pushTicker(progress.note);
       scheduleCounters();
     },
-    onSummary(summary) {
+    onSummary(summary, observations) {
       tracker.noteSummary(summary, run?.phase ?? null);
       if (run?.mode === "hard") {
         run.counters = { ...run.counters, ...tracker.counters() };
         scheduleCounters();
       }
       scheduleBlocks();
+      // The chromatogram feed: every observation behind this summary
+      // becomes one point, in probe order. Summaries that arrive
+      // without their observations (any caller that does not hand
+      // them up) feed nothing — the trace never plots an aggregate
+      // as if it were a probe.
+      if (run && Array.isArray(observations)) {
+        for (const observation of observations) {
+          const point = tracePointFor(observation);
+          if (point) tracePoints.push(point);
+        }
+        if (tracePoints.length > TRACE_BUFFER_LIMIT) {
+          tracePoints.splice(0, tracePoints.length - TRACE_BUFFER_LIMIT);
+        }
+        if (tracePoints.length > 0) scheduleTrace();
+      }
     },
     emitCandidate(row, lane) {
       emit("candidate", lane ? { row, lane } : { row });
@@ -747,20 +827,36 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     ticker(text) {
       pushTicker(text);
     },
-    finishRun({ status, mode, runId, report }) {
+    finishRun({ status, mode, runId, report, error }) {
       if (report && mode === "hard") tracker.markFinalists(report.results);
+      lastRun = {
+        mode,
+        runId,
+        status,
+        phase: run?.phase ?? null,
+        startedAt: run?.startedAt ?? null,
+        counters: run?.counters ?? {},
+        ...(error ? { error } : {}),
+      };
       if (report) {
         latestCache = { key: null, value: null };
         readLatest();
       }
       run = null;
       phaseStartedAt = null;
+      // The last probes of the run reach the chromatogram before the
+      // terminal run-state, like the final plate state below.
+      if (traceTimer) {
+        clearTimeout(traceTimer);
+        traceTimer = null;
+      }
+      flushTrace();
       // Final plate state (splits, finalists) goes out before the
       // terminal run-state, so the client's completion resync starts
       // from an already-correct genome.
       const deltas = tracker.drainDirty();
       if (deltas.length > 0) emit("blocks", { deltas });
-      emit("run-state", { status, mode, runId });
+      emit("run-state", { status, mode, runId, ...(error ? { error } : {}) });
     },
     currentRunState() {
       const view = run ?? restRunView();
@@ -787,6 +883,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
               phase: view.phase,
               startedAt: view.startedAt,
               counters: view.mode === "hard" ? { ...view.counters, ...tracker.counters() } : view.counters,
+              ...(view.error ? { error: view.error } : {}),
               ...(view.mode === "hard" ? { genome, top: tracker.topList() } : {}),
             }
           : null,

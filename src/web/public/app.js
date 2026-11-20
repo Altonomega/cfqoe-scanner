@@ -20,6 +20,17 @@ const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (n) => (n == null || !Number.isFinite(n) ? "–" : Math.round(n).toLocaleString("en-US"));
 const fmt2 = (n) => (n == null || !Number.isFinite(n) ? "–" : (Math.round(n * 100) / 100).toString());
+/* Results display rules: a results number is the report's own value,
+   formatted — never recomputed, never rounded past the engine's
+   precision. Scores leave the engine at one decimal (f1), sustained
+   Mbps at two (f2), RPM at one (f1); millisecond figures carry at
+   most two decimals and print trimmed (fTrim). The Wilson lower
+   bound is read from the report's own percent field
+   (scores.reliabilityLower95), never re-derived from the fraction. */
+const f1 = (n) => (n == null || !Number.isFinite(n) ? "–" : n.toFixed(1));
+const f2 = (n) => (n == null || !Number.isFinite(n) ? "–" : n.toFixed(2));
+const fTrim = (n) => (n == null || !Number.isFinite(n) ? "–" : String(Math.round(n * 100) / 100));
+const pct1 = (frac) => (frac == null || !Number.isFinite(frac) ? "–" : (Math.round(frac * 1000) / 10).toFixed(1) + "%");
 const pct = (x) => (x == null || !Number.isFinite(x) ? "–" : Math.round(x * 100) + "%");
 const mmss = (ms) => { const s = Math.floor((ms || 0) / 1000); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
 const D = (x) => `<bdi class="d mono">${esc(x)}</bdi>`; // bidi-isolated data span
@@ -55,18 +66,18 @@ const STR = {
 en: {
   "app.tagline": "· Cloudflare IP Scanner", "app.subtitle": "the sequencer's notebook — local session",
   "app.colophon": "CFQoE Scanner — measurements are run-relative; scores compare candidates within one run.",
-  "ui.calm": "Calm", "ui.night": "Night plate", "ui.day": "Day plate", "ui.stopServer": "Stop server",
-  "ui.stopServerArm": "Really stop?", "ui.stopRun": "Stop safely", "ui.stopRunArm": "Really stop?",
+  "ui.calm": "Calm", "ui.night": "Night plate", "ui.day": "Day plate", "ui.stopServer": "Stop the scanner",
+  "ui.stopServerArm": "Really stop?", "ui.stopRun": "Stop safely", "ui.stopRunArm": "Really stop?", "ui.stopping": "Stopping…",
   "ui.start": "Start", "ui.resume": "Resume", "ui.beginReplication": "Begin replication",
   "ui.save": "Save settings", "ui.restoreDefaults": "Restore defaults", "ui.restoreArm": "Really restore?",
   "ui.remove": "Remove", "ui.removeArm": "Really remove?", "ui.import": "Import configuration",
   "ui.openResults": "Open full results", "ui.downloadJson": "Download JSON", "ui.downloadBest": "Download best IPs",
   "ui.close": "Close", "ui.pause": "Pause", "ui.unpause": "Resume tail", "ui.add": "Add",
-  "ui.useLive": "Use live server", "ui.useSim": "Use simulated feed",
-  "conn.connecting": "connecting…", "conn.live": "● LIVE", "conn.reconnecting": "reconnecting…", "conn.offline": "server stopped", "conn.sim": "SIMULATED",
-  "sim.badge": "SIMULATED FEED", "sim.note": "Preview data source — a local simulation speaking the live contract. No scanner is running; nothing here is measured.",
-  "sim.speed": "speed", "sim.useLive": "Use live server",
-  "run.running": "RUNNING", "run.openConsole": "open console →", "run.idle": "No run yet this session.",
+  "conn.connecting": "connecting…", "conn.live": "● LIVE — your scanner", "conn.reconnecting": "reconnecting…", "conn.offline": "scanner stopped",
+  "run.running": "RUNNING", "run.stopping": "STOPPING", "run.openConsole": "open console →", "run.here": "console open — you are here", "run.idle": "No run yet this session.",
+  "conn.none": "○ NO CONNECTION",
+  "off.title": "Your scanner is not answering", "off.body": "The app on this machine is not responding — it may have been closed. Check the terminal window that launched it, then retry.",
+  "off.retry": "Retry connection", "off.still": "Still no answer — last tried {time}.",
   "nav.head": "Notebook", "nav.notes": "Run notes",
   "nav.dashboard": "Plate", "nav.genome": "Genome", "nav.results": "Results", "nav.reports": "Reports",
   "nav.settings": "Settings", "nav.config": "Config", "nav.diagnostics": "Diagnostics",
@@ -76,7 +87,7 @@ en: {
   "dash.resumeLine": "Resume the paused Hard run — {phase}, {probes} probes spent.",
   "status.config": "config", "status.xray": "xray", "status.verify": "verify", "status.resume": "resume", "status.platform": "platform",
   "status.ready": "ready", "status.missing": "missing", "status.found": "found", "status.notFound": "not found",
-  "status.sprt": "SPRT", "status.off": "off", "status.available": "available", "status.none": "none",
+  "status.sprt": "SPRT", "status.off": "off", "status.available": "available", "status.none": "none saved",
   "mode.quick": "Quick", "mode.full": "Full", "mode.research": "Research", "mode.hard": "Hard Deep Scan",
   "mode.quick.d": "A screening pass: 16 IPs, 2 rounds. Fast, shallow — a first look at the path.",
   "mode.full.d": "The everyday run: 120 IPs, 3 rounds, SPRT verification of 20 finalists, full QoE on the best 5.",
@@ -86,6 +97,27 @@ en: {
   "console.finalists": "finalists", "console.tunnel": "tunnel passes", "console.estTraffic": "estimated traffic",
   "console.ledger": "Candidate ledger", "console.noCandidates": "No candidates have completed a stage yet.",
   "console.finished": "Run finished.", "console.viewResults": "See the results",
+  "console.stopped": "Run stopped — the partial results are saved.", "console.journal": "Event journal",
+  "console.idleHint": "No run is running. Start one here — its progress will appear on this page, live, as it happens.",
+  "op.starting": "Starting the run…", "op.calibrating": "Calibrating — testing your path to choose a safe speed. On a slow path this can take up to a minute.",
+  "op.calibratingLevel": "Calibrating — testing speed level {done} of {total} on your path.",
+  "op.screening": "Screening — round {round} of {rounds} · probing {ip} · {done} of {total} checks done",
+  "op.screeningNoIp": "Screening — round {round} of {rounds} · {done} of {total} checks done",
+  "op.delayed-retry": "Delayed retry — {total} silent candidates get one more chance · {done} of {total} done",
+  "op.verification": "Verification — finalist {done} of {total} is re-tested (SPRT)",
+  "op.tunnel": "Tunnel QoE — measuring {ip} through a real tunnel · candidate {done} of {total}",
+  "op.tunnelNoIp": "Tunnel QoE — finalists are measured through a real tunnel · {done} of {total} done",
+  "op.phase": "{phase} · {done} of {total} done",
+  "ev.phase": "▸ {phase}", "ev.scan.start": "Scan started", "ev.scan.calibration": "Calibration finished — the run continues at the chosen speed",
+  "ev.scan.calibration.no_control": "The path check couldn't verify a reference point — continuing at full speed {n}; results may be less certain",
+  "ev.scan.calibration.no_control.plain": "The path check couldn't verify a reference point — continuing at the configured speed; results may be less certain",
+  "ev.hard.calibration": "Calibration finished — the run continues at the chosen speed",
+  "ev.hard.calibration.no_control": "The path check couldn't verify a reference point — continuing at full speed {n}; results may be less certain",
+  "ev.hard.calibration.no_control.plain": "The path check couldn't verify a reference point — continuing at the configured speed; results may be less certain",
+  "ev.scan.delayed_retry.start": "Delayed retry started", "ev.verification.start": "Verification started — finalists are re-tested",
+  "ev.verification.complete": "Verification finished", "ev.web.control.scan-stop": "Stop requested",
+  "ev.tunnel.backfill": "A finalist slot was empty — the next candidate takes it",
+  "ev.accept": "A finalist was accepted", "ev.reject": "A finalist was rejected", "ev.inconclusive": "A finalist stayed inconclusive — its screening evidence decides",
   "phase.screening": "Screening", "phase.delayed-retry": "Delayed retry", "phase.verification": "Verification (SPRT)",
   "phase.tunnel": "Tunnel QoE", "phase.calibrating": "Calibrating",
   "phase.hard-primer": "Primers — origins of replication", "phase.hard-coverage": "Proofreading — checking uneven blocks",
@@ -94,27 +126,53 @@ en: {
   "genome.title": "Hard Deep Scan", "genome.sub": "The whole Cloudflare catalog as one plate: {ranges} ranges · {blocks} blocks · {addrs} addresses. One cell = one \u2068/24\u2069 block.",
   "genome.ideo": "Ideogram — {ranges} ranges (width ∝ blocks)", "genome.plate": "The plate — {blocks} blocks",
   "genome.trace": "Trace — last probes (height = speed)", "genome.liveTop": "Live top", "genome.liveNotes": "Live notes",
-  "genome.budget": "Budget", "genome.spent": "{spent} / {total} probes",
-  "genome.counters": "elapsed {elapsed} · alive {alive} · primed {primed} · expanded {expanded} · split {split}",
+  "genome.budget": "Budget", "genome.spent": "{spent} / {total} probes", "genome.spentOnly": "{spent} probes spent",
+  "genome.intro": "This scan walks the whole catalog block by block. Stop it any time — progress is checkpointed, and Resume continues where it stopped.",
+  "phn.calibrating": "finding the speed this path can carry", "phn.screening": "quick eligibility probes for everyone",
+  "phn.delayed-retry": "a second chance for the silent ones", "phn.verification": "re-probing the survivors, verdicts early",
+  "phn.tunnel": "full measurement through the tunnel",
+  "phn.hard-primer": "three quick probes in every block", "phn.hard-coverage": "evening out the lopsided blocks",
+  "phn.hard-expansion": "more probes where life showed up", "phn.hard-retry": "a second chance for the silent ones",
+  "phn.hard-verify": "finalists re-probed; early verdicts", "phn.hard-finalize": "the best, measured end to end",
+  "console.ledgerNote": "Bars show progress through each stage. SPRT is the early-verdict test — it can settle a candidate before every round finishes.",
+  "genome.counters": "elapsed time {elapsed} · alive {alive} · primed {primed} · expanded {expanded} · split {split}",
   "genome.legend": "Legend", "genome.tapHint": "Tap a cell for the block inspector.",
   "lg.unprobed": "unprobed", "lg.known": "known (reputation)", "lg.priming": "priming", "lg.alive": "alive (depth = rate)",
-  "lg.absent": "absent (tick)", "lg.hot": "expanding (gold edge)", "lg.suspect": "suspect (underline)", "lg.split": "split",
+  "lg.absent": "absent (tick mark)", "lg.hot": "expanding (gold edge)", "lg.suspect": "suspect (underline)", "lg.split": "split",
   "lg.exhausted": "exhausted", "lg.finalist": "finalist (ring)", "lg.winner": "winner (dot)",
   "lane.title": "Sequencing lane — finalists under measurement",
   "insp.thisRun": "This run", "insp.primer": "Primer", "insp.halves": "Halves", "insp.reputation": "Reputation",
   "insp.candidates": "Candidates", "insp.openResults": "Open in Results", "insp.range": "range {range} · lane {lane}",
   "insp.probes": "{ok} ok of {n} probes · rate {rate} · lower95 {lower}", "insp.splitNo": "split: no (p {p})",
-  "insp.splitYes": "split: yes — children live in the quadrants", "insp.tier": "tier: {tier}",
+  "insp.splitYes": "split: yes — sub-blocks in the quadrants", "insp.tier": "tier: {tier}",
   "insp.repLine": "{n} probes over {runs} runs · decayed rate {rate} · last seen {date} · best {ip} ({colo})",
   "insp.unknown": "Not probed in a previous run.", "insp.noCand": "No candidate from this block yet.",
   "res.title": "Results", "res.fromRun": "Run {run} · {mode} · finished {when}",
   "res.filterBlock": "Showing only block {block}", "res.clearFilter": "clear filter",
   "res.empty": "No results yet. Run a scan and the rankings will appear here.",
-  "col.rank": "#", "col.ip": "IP", "col.verdict": "Verdict", "col.cons": "Cons.", "col.raw": "Raw", "col.overall": "Overall",
+  "col.rank": "#", "col.ip": "IP", "col.verdict": "Verdict", "col.cons": "Conservative", "col.raw": "Raw", "col.overall": "Overall",
   "col.elig": "Eligibility", "col.mbps": "Mbps", "col.rpm": "RPM", "col.pop": "POP", "col.gate": "Gate", "col.why": "Why",
+  "col.parts": "Score parts", "col.file": "File",
+  "comp.web": "Web", "comp.streaming": "Streaming", "comp.load": "Real load", "comp.reliability": "Reliability",
+  "verdict.recommended": "Recommended", "verdict.good": "Good", "verdict.usable": "Usable", "verdict.browsing-only": "Browsing only", "verdict.unverified": "Unverified", "verdict.unusable": "Unusable",
+  "gate.pass": "Passed", "gate.warn": "Warning", "gate.fail": "Failed", "gate.unknown": "Unknown",
+  "ms.complete": "complete", "ms.partial": "partial", "ms.incomplete": "incomplete", "ms.unmeasured": "unmeasured",
+  "conf.provisional": "provisional", "conf.low": "low", "conf.medium": "medium", "conf.high": "high",
+  "limit.sustainedMbps": "sustained download speed", "limit.shapingRatio": "speed fading over the run", "limit.rpm": "responsiveness under load", "limit.rttIncreaseMs": "added delay under load", "limit.rttInflation": "delay growing under load", "limit.jitterMs": "jitter — uneven timing", "limit.lossRate": "requests lost under load", "limit.fanoutSuccess": "parallel requests failing", "limit.freshConnectionMs": "slow fresh connections", "limit.uplinkMbps": "sustained upload speed",
+  "res.scope": "Scores are run-relative: they rank these candidates against each other inside this run — they are not grades against the whole internet.",
+  "res.legend": "Complete means every stage was measured. Partial means some stages are missing, and a partial score is capped at 70.",
+  "res.top": "Top of this run", "res.notMeasured": "not measured",
+  "det.eligibility": "Eligibility", "det.scores": "Scores", "det.load": "Real load", "det.streaming": "Streaming", "det.gates": "Gates", "det.measurement": "Measurement",
+  "det.success": "Successful probes", "det.rate": "Success rate", "det.lower95": "Wilson lower bound · 95%", "det.median": "Median handshake", "det.confidence": "Confidence",
+  "det.overall": "Overall", "det.rawOverall": "Overall before caps", "det.cons": "Conservative", "det.rawCons": "Conservative before caps",
+  "det.sustained": "Sustained", "det.rpm": "Responsiveness (RPM)", "det.shaping": "Shaping ratio", "det.addedRtt": "Added RTT",
+  "det.sustainable": "Sustainable", "det.quality": "Quality",
+  "det.status": "Gate status", "det.limiting": "Limiting factor", "det.verdict": "The engine's words",
+  "det.mstatus": "Measurement status", "det.bytes": "Traffic measured", "det.qoe": "QoE confidence",
+  "unit.ms": "ms", "unit.mbps": "Mbps",
   "rep.title": "Reports archive", "rep.sub": "Every saved run. Opening one reads it into the results view.",
   "rep.empty": "No saved reports yet.", "col.run": "Run", "col.mode": "Mode", "col.when": "Finished", "col.size": "Size", "col.open": "",
-  "set.title": "Scan settings", "set.sub": "The full settings tree. The web form writes through the same merge-and-migrate path as the terminal editor; the server is the authority, this form only presents.",
+  "set.title": "Scan settings", "set.sub": "The full settings tree. The web form writes through the same merge-and-migrate path as the terminal editor; the scanner itself saves and applies every change — this form only presents them.",
   "set.workloads": "Workloads", "set.customBrowsing": "Custom browsing page", "set.customStreaming": "Custom HLS stream",
   "set.name": "Name", "set.pageUrl": "Page URL", "set.manifestUrl": "Manifest URL (.m3u8)",
   "set.advanced": "Advanced", "set.estimate": "Estimated traffic per candidate: {bytes}",
@@ -128,79 +186,101 @@ en: {
   "cfg.removeNote": "Removing is refused while a run is active — a running scan keeps the configuration it started with.",
   "cfg.f.address": "Address", "cfg.f.port": "Port", "cfg.f.host": "Host", "cfg.f.sni": "SNI", "cfg.f.path": "Path",
   "cfg.f.transport": "Transport", "cfg.f.security": "Security", "cfg.f.label": "Label", "cfg.f.idPresent": "ID present",
-  "dg.title": "Diagnostics", "dg.system": "System check", "dg.source": "Data source",
-  "dg.sourceNote": "The simulation speaks the same contract as the live server; it exists for preview and testing. A real server, when it answers, always wins.",
+  "dg.title": "Diagnostics", "dg.system": "System check", "dg.conn": "Connection", "dg.connLive": "Connected to your scanner — everything here is live.", "dg.connOff": "Not connected to your scanner.",
+  "dg.calibTruth": "Real scan speed is automatic: every run opens with a short calibration that picks the concurrency your path can carry. There is no manual speed setting.",
   "dg.logs": "Log files", "dg.summary": "Summary", "dg.tail": "Live tail",
   "dg.events": "events", "dg.errors": "errors", "dg.warnings": "warnings",
   "dg.noLogs": "No log files yet.", "dg.tailEmpty": "The tail is quiet. Log lines of the active run will appear here.",
   "note.runActive": "A run is already active ({run}).", "note.configMissing": "No VLESS configuration is stored — import one first.",
-  "note.serverStopped": "Server stopped. The plate above is the last known state — relaunch from the terminal to continue.",
+  "note.serverStopped": "The scanner on this device stopped. The plate above is the last known state — relaunch from the terminal to continue.",
   "note.stopped": "Run stopped safely; progress is checkpointed.", "note.resumed": "Resumed from the checkpoint.",
   "note.failed": "The run failed — see Diagnostics for what the log recorded.",
-  "tick.calibrated": "Calibration: your path sustains {n} parallel probes; the scan will use {n}.",
-  "tick.primerDone": "Primer complete: {alive} of {blocks} blocks answered at least once.",
-  "tick.coverage": "Split-coverage: {suspects} suspects examined · {split} blocks split.",
-  "tick.wave": "Wave {wave} complete · +{probes} probes · budget {spent}/{total}.",
-  "tick.retries": "Delayed retries recovered {n} blocks.",
-  "tick.pool": "Finalist pool crystallized: {n} blocks.",
-  "tick.repSaved": "Reputation saved — the next run's plate starts from this one.",
-  "tick.valve": "Stopped early: {pct} of the first probes failed the same way — this usually means the configuration or the path is down, not that the catalog is dead.",
-  "tick.complete": "Run complete. {eligible} eligible IPs · report saved.",
-  "tick.started": "Run {run} started ({mode}).",
+  "note.canceled": "Run stopped — partial results are saved.", "note.noRun": "No run is running.",
+  "note.noResume": "No paused hard scan was found to resume.", "note.settingsInvalid": "The saved settings could not be loaded — see Diagnostics.",
+  "console.failed": "Run failed — {reason}", "err.unknown": "unknown error",
 },
 fa: {
-  "app.tagline": "· اسکنر آی‌پی‌های کلودفلر", "app.subtitle": "دفتر یادداشت سکوئنسر — نشست محلی",
+  "app.tagline": "· اسکنر آی‌پی‌های کلودفلر", "app.subtitle": "دفتر یادداشت توالی‌یاب — نشست محلی",
   "app.colophon": "اسکنر CFQoE — اندازه‌گیری‌ها نسبیِ هر اجرا هستند؛ امتیازها کاندیدها را درون همان اجرا مقایسه می‌کنند.",
-  "ui.calm": "آرام", "ui.night": "پلیت شب", "ui.day": "پلیت روز", "ui.stopServer": "توقف سرور",
-  "ui.stopServerArm": "واقعاً متوقف شود؟", "ui.stopRun": "توقف امن", "ui.stopRunArm": "واقعاً متوقف شود؟",
+  "ui.calm": "آرام", "ui.night": "پلیت شب", "ui.day": "پلیت روز", "ui.stopServer": "توقف اسکنر",
+  "ui.stopServerArm": "واقعاً متوقف شود؟", "ui.stopRun": "توقف ایمن", "ui.stopRunArm": "واقعاً متوقف شود؟", "ui.stopping": "در حال توقف…",
   "ui.start": "شروع", "ui.resume": "ادامه", "ui.beginReplication": "آغاز همانندسازی",
   "ui.save": "ذخیره تنظیمات", "ui.restoreDefaults": "بازگردانی پیش‌فرض‌ها", "ui.restoreArm": "واقعاً بازگردانده شود؟",
   "ui.remove": "حذف", "ui.removeArm": "واقعاً حذف شود؟", "ui.import": "وارد کردن پیکربندی",
   "ui.openResults": "مشاهده نتایج کامل", "ui.downloadJson": "دانلود JSON", "ui.downloadBest": "دانلود بهترین آی‌پی‌ها",
-  "ui.close": "بستن", "ui.pause": "مکث", "ui.unpause": "ادامه پخش", "ui.add": "افزودن",
-  "ui.useLive": "استفاده از سرور زنده", "ui.useSim": "استفاده از فید شبیه‌سازی",
-  "conn.connecting": "در حال اتصال…", "conn.live": "● زنده", "conn.reconnecting": "در حال اتصال مجدد…", "conn.offline": "سرور متوقف شد", "conn.sim": "شبیه‌سازی",
-  "sim.badge": "فید شبیه‌سازی‌شده", "sim.note": "منبع دادهٔ پیش‌نمایش است — یک شبیه‌سازی محلی که با همان قرارداد سرور زنده صحبت می‌کند. هیچ اسکنی در حال اجرا نیست و هیچ‌چیز در اینجا اندازه‌گیری واقعی نیست.",
-  "sim.speed": "سرعت", "sim.useLive": "استفاده از سرور زنده",
-  "run.running": "در حال اجرا", "run.openConsole": "باز کردن کنسول ←", "run.idle": "هنوز در این نشست اجرایی شروع نشده است.",
+  "ui.close": "بستن", "ui.pause": "مکث", "ui.unpause": "ادامهٔ دنبال‌کردن", "ui.add": "افزودن",
+  "conn.connecting": "در حال اتصال…", "conn.live": "● زنده — اسکنر شما", "conn.reconnecting": "در حال اتصال مجدد…", "conn.offline": "اسکنر متوقف است",
+  "run.running": "در حال اجرا", "run.stopping": "در حال توقف", "run.openConsole": "باز کردن کنسول ←", "run.here": "کنسول باز است — همین‌جا هستید", "run.idle": "هنوز در این نشست اجرایی شروع نشده است.",
+  "conn.none": "○ بدون اتصال",
+  "off.title": "اسکنر شما پاسخ نمی‌دهد", "off.body": "برنامه روی این دستگاه پاسخ نمی‌دهد — شاید بسته شده باشد. پنجرهٔ ترمینالی را که برنامه را اجرا کرد بررسی کنید و دوباره تلاش کنید.",
+  "off.retry": "تلاش دوباره برای اتصال", "off.still": "هنوز پاسخی نیست — آخرین تلاش {time}.",
   "nav.head": "دفتر", "nav.notes": "یادداشت‌های اجرا",
-  "nav.dashboard": "داشبورد", "nav.genome": "ژنوم", "nav.results": "نتایج", "nav.reports": "گزارش‌ها",
+  "nav.dashboard": "پلیت", "nav.genome": "ژنوم", "nav.results": "نتایج", "nav.reports": "گزارش‌ها",
   "nav.settings": "تنظیمات", "nav.config": "پیکربندی", "nav.diagnostics": "عیب‌یابی",
   "dash.status": "وضعیت", "dash.runScan": "شروع یک اسکن", "dash.plateRest": "پلیت، در حالت سکون",
   "dash.latest": "آخرین نتیجه", "dash.noRuns": "هنوز اجرایی انجام نشده است؛ پلیت خالی است.",
   "dash.fromRuns": "از اجراهای ثبت‌شدهٔ شما: {alive} بلاک زنده شناخته شده‌اند · {absent} بلاک غایب · در مجموع {known} بلاک شناخته‌شده.",
-  "dash.resumeLine": "ادامهٔ اجرای متوقف‌شدهٔ Hard — مرحلهٔ {phase}، {probes} پروب مصرف شده است.",
+  "dash.resumeLine": "ادامهٔ اجرای متوقف‌شدهٔ اسکن عمیق — مرحلهٔ {phase}، {probes} پروب مصرف شده است.",
   "status.config": "پیکربندی", "status.xray": "xray", "status.verify": "راستی‌آزمایی", "status.resume": "ادامه", "status.platform": "پلتفرم",
   "status.ready": "آماده", "status.missing": "موجود نیست", "status.found": "پیدا شد", "status.notFound": "پیدا نشد",
   "status.sprt": "SPRT", "status.off": "خاموش", "status.available": "موجود است", "status.none": "ندارد",
   "mode.quick": "سریع (Quick)", "mode.full": "کامل (Full)", "mode.research": "پژوهشی (Research)", "mode.hard": "اسکن عمیق (Hard Deep Scan)",
-  "mode.quick.d": "یک غربال سریع: ۱۶ آی‌پی در ۲ دور. سریع و سطحی — نگاهی اول به مسیر.",
-  "mode.full.d": "اجرای روزمره: ۱۲۰ آی‌پی در ۳ دور، راستی‌آزمایی SPRT روی ۲۰ فینالیست و سنجش کامل کیفیت روی ۵ تای برتر.",
-  "mode.research.d": "شواهد عمیق: ۲۴۰ کاندیدا، ۶ دور، ۲۴ فینالیست و سه پاس تونل. کند و موشکافانه.",
-  "mode.hard.d": "کل کاتالوگ، بلاک به بلاک: ۲۳٬۰۹۱ پروب پرایمر، گسترش تطبیقی و قابلیت ادامه دادن.",
+  "mode.quick.d": "یک غربال سریع: ۱۶ آی‌پی در ۲ دور. سریع و سطحی — نگاهی نخست به مسیر.",
+  "mode.full.d": "اجرای روزمره: ۱۲۰ آی‌پی در ۳ دور، راستی‌آزمایی SPRT روی ۲۰ فینالیست و سنجش کامل کیفیت روی ۵ فینالیست برتر.",
+  "mode.research.d": "شواهد عمیق: ۲۴۰ کاندیدا، ۶ دور، ۲۴ فینالیست و سه گذر تونل. کند و موشکافانه.",
+  "mode.hard.d": "کل کاتالوگ، بلاک به بلاک: ۲۳٬۰۹۱ پروب پرایمر، گسترش تطبیقی و امکان ادامهٔ اجرا.",
   "console.preflight": "پیش‌پرواز", "console.candidates": "کاندیدا", "console.rounds": "دور غربال",
-  "console.finalists": "فینالیست", "console.tunnel": "پاس تونل", "console.estTraffic": "ترافیک تخمینی",
+  "console.finalists": "فینالیست", "console.tunnel": "گذر تونل", "console.estTraffic": "ترافیک تخمینی",
   "console.ledger": "دفتر کاندیداها", "console.noCandidates": "هنوز هیچ کاندیدی مرحله‌ای را کامل نکرده است.",
   "console.finished": "اجرا تمام شد.", "console.viewResults": "مشاهده نتایج",
+  "console.stopped": "اجرا متوقف شد — نتایج جزئی ذخیره شدند.", "console.journal": "گزارش رویدادها",
+  "console.idleHint": "هیچ اجرایی در حال انجام نیست. از همین‌جا شروع کنید — پیشرفتش زنده و لحظه‌به‌لحظه روی همین صفحه نمایش داده می‌شود.",
+  "op.starting": "در حال شروع اجرا…", "op.calibrating": "کالیبراسیون — مسیر شما آزموده می‌شود تا سرعت ایمن انتخاب شود. در مسیرهای کند ممکن است تا یک دقیقه طول بکشد.",
+  "op.calibratingLevel": "کالیبراسیون — پلهٔ سرعت {done} از {total} روی مسیر شما آزموده می‌شود.",
+  "op.screening": "غربال — دور {round} از {rounds} · در حال آزمودن {ip} · {done} از {total} بررسی انجام شده",
+  "op.screeningNoIp": "غربال — دور {round} از {rounds} · {done} از {total} بررسی انجام شده",
+  "op.delayed-retry": "تلاش مجدد با تأخیر — به {total} کاندیدای بی‌پاسخ یک فرصت دیگر داده می‌شود · {done} از {total} انجام شده",
+  "op.verification": "راستی‌آزمایی — فینالیست {done} از {total} با SPRT دوباره آزموده می‌شود",
+  "op.tunnel": "سنجش کیفیت تونل — {ip} از یک تونل واقعی سنجیده می‌شود · کاندیدا {done} از {total}",
+  "op.tunnelNoIp": "سنجش کیفیت تونل — فینالیست‌ها از یک تونل واقعی سنجیده می‌شوند · {done} از {total} انجام شده",
+  "op.phase": "{phase} · {done} از {total} انجام شده",
+  "ev.phase": "▸ {phase}", "ev.scan.start": "اسکن شروع شد", "ev.scan.calibration": "کالیبراسیون تمام شد — اجرا با سرعت انتخاب‌شده ادامه می‌یابد",
+  "ev.scan.calibration.no_control": "بررسی مسیر نتوانست نقطهٔ مرجعی را راستی‌آزمایی کند — با سرعت کامل {n} ادامه می‌دهیم؛ نتایج ممکن است قطعیت کمتری داشته باشند",
+  "ev.scan.calibration.no_control.plain": "بررسی مسیر نتوانست نقطهٔ مرجعی را راستی‌آزمایی کند — با سرعت پیکربندی‌شده ادامه می‌دهیم؛ نتایج ممکن است قطعیت کمتری داشته باشند",
+  "ev.hard.calibration": "کالیبراسیون تمام شد — اجرا با سرعت انتخاب‌شده ادامه می‌یابد",
+  "ev.hard.calibration.no_control": "بررسی مسیر نتوانست نقطهٔ مرجعی را راستی‌آزمایی کند — با سرعت کامل {n} ادامه می‌دهیم؛ نتایج ممکن است قطعیت کمتری داشته باشند",
+  "ev.hard.calibration.no_control.plain": "بررسی مسیر نتوانست نقطهٔ مرجعی را راستی‌آزمایی کند — با سرعت پیکربندی‌شده ادامه می‌دهیم؛ نتایج ممکن است قطعیت کمتری داشته باشند",
+  "ev.scan.delayed_retry.start": "تلاش مجدد با تأخیر شروع شد", "ev.verification.start": "راستی‌آزمایی شروع شد — فینالیست‌ها دوباره آزموده می‌شوند",
+  "ev.verification.complete": "راستی‌آزمایی تمام شد", "ev.web.control.scan-stop": "درخواست توقف داده شد",
+  "ev.tunnel.backfill": "یک جای فینالیست خالی بود — کاندیدای بعدی جایش را می‌گیرد",
+  "ev.accept": "یک فینالیست پذیرفته شد", "ev.reject": "یک فینالیست رد شد", "ev.inconclusive": "یک فینالیست نامشخص ماند — شواهد غربالش تصمیم می‌گیرد",
   "phase.screening": "غربال", "phase.delayed-retry": "تلاش مجدد با تأخیر", "phase.verification": "راستی‌آزمایی (SPRT)",
   "phase.tunnel": "سنجش کیفیت تونل", "phase.calibrating": "کالیبراسیون",
-  "phase.hard-primer": "پرایمرها — نقاط آغاز همانندسازی", "phase.hard-coverage": "بازخوانی — بررسی بلاک‌های ناهموار",
+  "phase.hard-primer": "پرایمرها — نقاط آغاز همانندسازی", "phase.hard-coverage": "تصحیح — بررسی بلاک‌های ناهموار",
   "phase.hard-expansion": "چنگال‌های همانندسازی — گسترش بلاک‌های زنده", "phase.hard-retry": "تلاش‌های مجدد با تأخیر",
-  "phase.hard-verify": "راستی‌آزمایی فینالیست‌ها (SPRT)", "phase.hard-finalize": "سنجش نهایی کیفیت — خط سکوئنسینگ",
-  "genome.title": "اسکن عمیق (Hard Deep Scan)", "genome.sub": "کل کاتالوگ کلودفلر به‌صورت یک پلیت: {ranges} رینج · {blocks} بلاک · {addrs} آدرس. هر خانه = یک بلاک \u2068/24\u2069.",
-  "genome.ideo": "ایدیوگرام — {ranges} رینج (عرض متناسب با تعداد بلاک)", "genome.plate": "پلیت — {blocks} بلاک",
-  "genome.trace": "ردّ پروب‌ها — آخرین پروب‌ها (ارتفاع = سرعت)", "genome.liveTop": "برترهای زنده", "genome.liveNotes": "یادداشت‌های زنده",
-  "genome.budget": "بودجه", "genome.spent": "{spent} / {total} پروب",
-  "genome.counters": "گذشته {elapsed} · زنده {alive} · پرایمرشده {primed} · گسترش‌یافته {expanded} · شکافته {split}",
-  "genome.legend": "راهنما", "genome.tapHint": "برای بازرس بلاک، روی یک خانه بزنید.",
-  "lg.unprobed": "پروب‌نشده", "lg.known": "شناخته‌شده (اعتبار)", "lg.priming": "در حال پرایمر", "lg.alive": "زنده (عمق = نرخ)",
-  "lg.absent": "غایب (تیک)", "lg.hot": "در حال گسترش (لبه طلایی)", "lg.suspect": "مظنون (خط زیرین)", "lg.split": "شکافته",
+  "phase.hard-verify": "راستی‌آزمایی فینالیست‌ها (SPRT)", "phase.hard-finalize": "سنجش نهایی کیفیت — خط توالی‌یابی",
+  "genome.title": "اسکن عمیق (Hard Deep Scan)", "genome.sub": "کل کاتالوگ کلودفلر به‌صورت یک پلیت: {ranges} بازه · {blocks} بلاک · {addrs} آدرس. هر خانه = یک بلاک \u2068/24\u2069.",
+  "genome.ideo": "ایدیوگرام — {ranges} بازه (عرض متناسب با تعداد بلاک)", "genome.plate": "پلیت — {blocks} بلاک",
+  "genome.trace": "ردّ — آخرین پروب‌ها (ارتفاع = سرعت)", "genome.liveTop": "برترهای زنده", "genome.liveNotes": "یادداشت‌های زنده",
+  "genome.budget": "بودجه", "genome.spent": "{spent} / {total} پروب", "genome.spentOnly": "{spent} پروب مصرف‌شده",
+  "genome.intro": "این اسکن کل کاتالوگ را بلاک‌به‌بلاک طی می‌کند. هر وقت خواستید متوقفش کنید — پیشرفت چک‌پوینت می‌شود و «ادامه» از همان‌جا برمی‌دارد.",
+  "phn.calibrating": "پیدا کردن سرعتی که این مسیر می‌تواند حمل کند", "phn.screening": "پروب‌های سریع صلاحیت برای همه",
+  "phn.delayed-retry": "فرصت دوباره برای بی‌پاسخ‌ها", "phn.verification": "پروب دوباره بازمانده‌ها، با حکم زودهنگام",
+  "phn.tunnel": "اندازه‌گیری کامل از درون تونل",
+  "phn.hard-primer": "سه پروب سریع در هر بلاک", "phn.hard-coverage": "هم‌سطح‌کردن بلاک‌های ناهموار",
+  "phn.hard-expansion": "پروب بیشتر، هرجا نشانه حیات بود", "phn.hard-retry": "فرصت دوباره برای بی‌پاسخ‌ها",
+  "phn.hard-verify": "پروب دوباره فینالیست‌ها؛ حکم زودهنگام", "phn.hard-finalize": "بهترین‌ها، اندازه‌گیری‌شده از سر تا ته",
+  "console.ledgerNote": "نوارها پیشرفت هر مرحله را نشان می‌دهند. SPRT آزمون حکم زودهنگام است — می‌تواند پیش از پایان همه دورها تکلیف یک کاندید را روشن کند.",
+  "genome.counters": "زمان سپری‌شده {elapsed} · زنده {alive} · پرایمر‌شده {primed} · گسترش‌یافته {expanded} · شکافته {split}",
+  "genome.legend": "راهنما", "genome.tapHint": "برای بازرسی بلاک، روی یک خانه بزنید.",
+  "lg.unprobed": "پروب‌نشده", "lg.known": "شناخته‌شده (اعتبار)", "lg.priming": "پرایمر در حال انجام", "lg.alive": "زنده (عمق = نرخ)",
+  "lg.absent": "غایب (تیک)", "lg.hot": "در حال گسترش (لبه طلایی)", "lg.suspect": "مشکوک (خط زیرین)", "lg.split": "شکافته",
   "lg.exhausted": "تمام‌شده", "lg.finalist": "فینالیست (حلقه)", "lg.winner": "برنده (نقطه)",
-  "lane.title": "خط سکوئنسینگ — فینالیست‌ها زیر اندازه‌گیری",
+  "lane.title": "خط توالی‌یابی — فینالیست‌ها در حال اندازه‌گیری",
   "insp.thisRun": "این اجرا", "insp.primer": "پرایمر", "insp.halves": "نیمه‌ها", "insp.reputation": "اعتبار",
-  "insp.candidates": "کاندیداها", "insp.openResults": "باز کردن در نتایج", "insp.range": "رینج {range} · لاین {lane}",
+  "insp.candidates": "کاندیداها", "insp.openResults": "باز کردن در نتایج", "insp.range": "بازه {range} · خط {lane}",
   "insp.probes": "{ok} موفق از {n} پروب · نرخ {rate} · کران پایین ۹۵٪ {lower}", "insp.splitNo": "شکافت: نه (p {p})",
-  "insp.splitYes": "شکافت: بله — فرزندان در ربع‌ها زندگی می‌کنند", "insp.tier": "رده: {tier}",
+  "insp.splitYes": "شکافت: بله — زیر‌بلاک‌ها در ربع‌ها", "insp.tier": "رده: {tier}",
   "insp.repLine": "{n} پروب در {runs} اجرا · نرخ افت‌یافته {rate} · آخرین مشاهده {date} · بهترین {ip} ({colo})",
   "insp.unknown": "در اجرای قبلی پروب نشده است.", "insp.noCand": "هنوز کاندیدی از این بلاک نیست.",
   "res.title": "نتایج", "res.fromRun": "اجرای {run} · {mode} · پایان‌یافته در {when}",
@@ -208,41 +288,52 @@ fa: {
   "res.empty": "هنوز نتیجه‌ای نیست. یک اسکن اجرا کنید تا رتبه‌بندی اینجا ظاهر شود.",
   "col.rank": "#", "col.ip": "آی‌پی", "col.verdict": "حکم", "col.cons": "محافظه‌کار", "col.raw": "خام", "col.overall": "کلی",
   "col.elig": "صلاحیت", "col.mbps": "Mbps", "col.rpm": "RPM", "col.pop": "POP", "col.gate": "گیت", "col.why": "چرا",
+  "col.parts": "اجزای امتیاز", "col.file": "فایل",
+  "comp.web": "وب", "comp.streaming": "استریم", "comp.load": "بار واقعی", "comp.reliability": "پایایی",
+  "verdict.recommended": "پیشنهادشده", "verdict.good": "خوب", "verdict.usable": "قابل استفاده", "verdict.browsing-only": "فقط وب‌گردی", "verdict.unverified": "تأییدنشده", "verdict.unusable": "غیرقابل استفاده",
+  "gate.pass": "قبول", "gate.warn": "قبول با هشدار", "gate.fail": "رد", "gate.unknown": "نامشخص",
+  "ms.complete": "کامل", "ms.partial": "ناقص", "ms.incomplete": "ناتمام", "ms.unmeasured": "اندازه‌گیری‌نشده",
+  "conf.provisional": "موقت", "conf.low": "کم", "conf.medium": "متوسط", "conf.high": "زیاد",
+  "limit.sustainedMbps": "سرعت دانلود پایدار", "limit.shapingRatio": "افت سرعت در طول اجرا", "limit.rpm": "پاسخ‌گویی زیر بار", "limit.rttIncreaseMs": "تأخیر اضافه زیر بار", "limit.rttInflation": "رشد تأخیر زیر بار", "limit.jitterMs": "جیتر — نوسان زمان‌بندی", "limit.lossRate": "درخواست‌های گم‌شده زیر بار", "limit.fanoutSuccess": "خطای درخواست‌های موازی", "limit.freshConnectionMs": "کندی اتصال‌های تازه", "limit.uplinkMbps": "سرعت آپلود پایدار",
+  "res.scope": "امتیازها نسبیِ همین اجرا هستند: کاندیدها را فقط با یکدیگر در همین اجرا مقایسه می‌کنند — نمره‌ای در برابر کل اینترنت نیستند.",
+  "res.legend": "کامل یعنی همه مراحل اندازه‌گیری شده‌اند. ناقص یعنی بعضی مراحل غایب‌اند و امتیاز ناقص سقف ۷۰ دارد.",
+  "res.top": "برترین این اجرا", "res.notMeasured": "اندازه‌گیری نشده",
+  "det.eligibility": "صلاحیت", "det.scores": "امتیازها", "det.load": "بار واقعی", "det.streaming": "استریم", "det.gates": "گیت‌ها", "det.measurement": "اندازه‌گیری",
+  "det.success": "پروب‌های موفق", "det.rate": "نرخ موفقیت", "det.lower95": "کران پایین ویلسون · ۹۵٪", "det.median": "میانه هندشیک", "det.confidence": "اطمینان",
+  "det.overall": "کلی", "det.rawOverall": "کلی پیش از سقف", "det.cons": "محافظه‌کار", "det.rawCons": "محافظه‌کار پیش از سقف",
+  "det.sustained": "پایدار", "det.rpm": "پاسخ‌گویی (RPM)", "det.shaping": "نسبت شکل‌دهی", "det.addedRtt": "RTT اضافه",
+  "det.sustainable": "ماندگار", "det.quality": "کیفیت",
+  "det.status": "وضعیت گیت", "det.limiting": "عامل محدودکننده", "det.verdict": "حکم موتور",
+  "det.mstatus": "وضعیت اندازه‌گیری", "det.bytes": "ترافیک اندازه‌گیری‌شده", "det.qoe": "اطمینان QoE",
+  "unit.ms": "ms", "unit.mbps": "Mbps",
   "rep.title": "بایگانی گزارش‌ها", "rep.sub": "همهٔ اجراهای ذخیره‌شده. باز کردن هرکدام، آن را در نمای نتایج می‌خواند.",
   "rep.empty": "هنوز گزارش ذخیره‌شده‌ای نیست.", "col.run": "اجرا", "col.mode": "حالت", "col.when": "پایان", "col.size": "حجم", "col.open": "",
-  "set.title": "تنظیمات اسکن", "set.sub": "کل درخت تنظیمات. فرم وب از همان مسیر ادغام و مهاجرت ویرایشگر ترمینال می‌نویسد؛ مرجع نهایی سرور است و این فرم فقط ارائه می‌کند.",
+  "set.title": "تنظیمات اسکن", "set.sub": "کل درخت تنظیمات. فرم وب از همان مسیر ادغام و مهاجرت ویرایشگر ترمینال می‌نویسد؛ تغییرات را خود اسکنر ذخیره و اعمال می‌کند و این فرم فقط آن‌ها را ارائه می‌کند.",
   "set.workloads": "بارهای کاری", "set.customBrowsing": "صفحهٔ مرور سفارشی", "set.customStreaming": "استریم HLS سفارشی",
   "set.name": "نام", "set.pageUrl": "نشانی صفحه", "set.manifestUrl": "نشانی مانیفست (.m3u8)",
   "set.advanced": "پیشرفته", "set.estimate": "ترافیک تخمینی به‌ازای هر کاندیدا: {bytes}",
   "set.saved": "تنظیمات ذخیره شد.", "set.restored": "تنظیمات پیش‌فرض بازگردانده شد.", "set.invalid": "برخی فیلدها عدد معتبر نیستند — علامت خوردند؛ چیزی ذخیره نشد.",
   "set.simNote": "با شبیه‌سازی اعتبارسنجی شده — با احتیاط تغییر دهید.",
-  "cfg.title": "پیکربندی VLESS", "cfg.sub": "پیکربندی ذخیره‌شده با ارجاع مدیریت می‌شود. خود URI هیچ‌وقت نمایش داده نمی‌شود، برگردانده نمی‌شود و لاگ نمی‌شود — فقط همین توصیف امن.",
+  "cfg.title": "پیکربندی VLESS", "cfg.sub": "پیکربندی ذخیره‌شده با ارجاع مدیریت می‌شود. خود URI هیچ‌وقت نمایش داده نمی‌شود، برگردانده نمی‌شود و در لاگ ثبت نمی‌شود — فقط همین توصیف ایمن.",
   "cfg.stored": "یک پیکربندی ذخیره شده است.", "cfg.notStored": "هنوز پیکربندی‌ای ذخیره نشده است.",
   "cfg.protected": "فایل محرمانه محافظت‌شده است: {yes}", "cfg.yes": "بله", "cfg.no": "نه",
-  "cfg.paste": "یک لینک vless:// بچسبانید", "cfg.pastePh": "vless://… (فیلد همان لحظهٔ ذخیره پاک می‌شود)",
+  "cfg.paste": "یک لینک vless:// جای‌گذاری کنید", "cfg.pastePh": "vless://… (فیلد همان لحظهٔ ذخیره پاک می‌شود)",
   "cfg.imported": "پیکربندی وارد و ذخیره شد.", "cfg.removed": "پیکربندی حذف شد.",
   "cfg.removeNote": "حذف هنگام اجرای فعال رد می‌شود — اسکن در حال اجرا پیکربندی شروع خودش را نگه می‌دارد.",
   "cfg.f.address": "آدرس", "cfg.f.port": "پورت", "cfg.f.host": "هاست", "cfg.f.sni": "SNI", "cfg.f.path": "مسیر",
-  "cfg.f.transport": "ترابری", "cfg.f.security": "امنیت", "cfg.f.label": "برچسب", "cfg.f.idPresent": "شناسه موجود است",
-  "dg.title": "عیب‌یابی", "dg.system": "بررسی سیستم", "dg.source": "منبع داده",
-  "dg.sourceNote": "شبیه‌سازی با همان قرارداد سرور زنده صحبت می‌کند؛ برای پیش‌نمایش و تست است. سرور واقعی، هر وقت پاسخ بدهد، همیشه برنده است.",
-  "dg.logs": "فایل‌های لاگ", "dg.summary": "خلاصه", "dg.tail": "پخش زندهٔ لاگ",
+  "cfg.f.transport": "ترانسپورت", "cfg.f.security": "امنیت", "cfg.f.label": "برچسب", "cfg.f.idPresent": "شناسه موجود است",
+  "dg.title": "عیب‌یابی", "dg.system": "بررسی سیستم", "dg.conn": "اتصال", "dg.connLive": "به اسکنر شما متصل است — همه‌چیز اینجا زنده است.", "dg.connOff": "به اسکنر شما متصل نیست.",
+  "dg.calibTruth": "سرعت اسکن واقعی خودکار است: هر اجرا با یک کالیبراسیون کوتاه شروع می‌شود که هم‌روندی قابل‌تحمل مسیر شما را انتخاب می‌کند. هیچ تنظیم سرعت دستی وجود ندارد.",
+  "dg.logs": "فایل‌های لاگ", "dg.summary": "خلاصه", "dg.tail": "دنبالهٔ زندهٔ لاگ",
   "dg.events": "رویداد", "dg.errors": "خطا", "dg.warnings": "هشدار",
-  "dg.noLogs": "هنوز فایل لاگی نیست.", "dg.tailEmpty": "پخش زنده ساکت است. خطوط لاگ اجرای فعال اینجا ظاهر می‌شوند.",
+  "dg.noLogs": "هنوز فایل لاگی نیست.", "dg.tailEmpty": "دنباله ساکت است. خطوط لاگ اجرای فعال اینجا ظاهر می‌شوند.",
   "note.runActive": "اجرایی هم‌اکنون فعال است ({run}).", "note.configMissing": "پیکربندی VLESS ذخیره نشده است — اول یکی وارد کنید.",
-  "note.serverStopped": "سرور متوقف شد. پلیت بالا آخرین وضعیت شناخته‌شده است — برای ادامه از ترمینال دوباره اجرا کنید.",
-  "note.stopped": "اجرا با امنیت متوقف شد؛ پیشرفت چک‌پوینت شده است.", "note.resumed": "از چک‌پوینت ادامه یافت.",
+  "note.serverStopped": "اسکنر روی این دستگاه متوقف شد. پلیت بالا آخرین وضعیت شناخته‌شده است — برای ادامه از ترمینال دوباره اجرا کنید.",
+  "note.stopped": "اجرا به‌صورت ایمن متوقف شد؛ پیشرفت چک‌پوینت شده است.", "note.resumed": "از چک‌پوینت ادامه یافت.",
   "note.failed": "اجرا ناموفق بود — برای جزئیات، لاگ را در عیب‌یابی ببینید.",
-  "tick.calibrated": "کالیبراسیون: مسیر شما {n} پروب موازی را تاب می‌آورد؛ اسکن از {n} استفاده می‌کند.",
-  "tick.primerDone": "پرایمر کامل شد: {alive} از {blocks} بلاک دست‌کم یک‌بار پاسخ دادند.",
-  "tick.coverage": "پوشش شکافت: {suspects} مظنون بررسی شد · {split} بلاک شکافت.",
-  "tick.wave": "موج {wave} کامل شد · +{probes} پروب · بودجه {spent}/{total}.",
-  "tick.retries": "تلاش‌های مجدد {n} بلاک را برگرداندند.",
-  "tick.pool": "استخر فینالیست‌ها متبلور شد: {n} بلاک.",
-  "tick.repSaved": "اعتبار ذخیره شد — پلیت اجرای بعدی از همین یکی شروع می‌شود.",
-  "tick.valve": "توقف زودهنگام: {pct} از پروب‌های اول به یک شکل شکست خوردند — معمولاً یعنی پیکربندی یا مسیر پایین است، نه اینکه کاتالوگ مرده باشد.",
-  "tick.complete": "اجرا کامل شد. {eligible} آی‌پی واجد شرایط · گزارش ذخیره شد.",
-  "tick.started": "اجرای {run} شروع شد ({mode}).",
+  "note.canceled": "اجرا متوقف شد — نتایج جزئی ذخیره شده‌اند.", "note.noRun": "هیچ اجرایی در حال انجام نیست.",
+  "note.noResume": "اسکن عمیقِ متوقف‌شده‌ای برای ادامه یافت نشد.", "note.settingsInvalid": "تنظیمات ذخیره‌شده بارگذاری نشدند — عیب‌یابی را ببینید.",
+  "console.failed": "اجرا ناموفق بود — {reason}", "err.unknown": "خطای نامشخص",
 }};
 let lang = prefs.lang === "fa" ? "fa" : "en";
 /* Substitutions are data (IPs, CIDRs, run IDs, counts, rates). Every
@@ -323,559 +414,26 @@ const Live = {
     for (const type of ["phase", "counters", "blocks", "trace", "ticker", "candidate", "log", "run-state"])
       es.addEventListener(type, (e) => { try { app.onEvent(type, JSON.parse(e.data)); } catch { /* malformed frame */ } });
     es.onopen = () => app.onConn("live");
-    es.onerror = () => app.onConn("reconnecting");
+    es.onerror = () => { app.onConn("reconnecting"); scheduleReachCheck(); };
   },
   disconnect() { if (this.es) { this.es.close(); this.es = null; } },
   setTail(on) { if (this.tail !== on) { this.tail = on; if (this.es) this.connect(); } },
 };
 
-/* ---------------- simulation source ----------------
-   A deterministic (seeded) local engine that speaks the §5 contract:
-   same snapshot shape, same event taxonomy, same cadence discipline.
-   It exists so the UI can be previewed and Proof-tested before W3.
-   It measures nothing; the SIMULATED FEED bar says so, always. */
-const Sim = {
-  kind: "sim", seq: 0, runCounter: 0, timer: null, tail: false, speed: 16,
-  cat: null, latent: null, half: null, known: null, bestHost: null, colo: null,
-  state: null, heat: null, quads: null, quadHeat: null,
-  run: null, paused: null, reports: [], latestReport: null, cfgDesc: null,
-  settingsObj: null, logCount: { total: 0, errors: 0, warnings: 0 },
-  emit(type, data) { data.seq = ++this.seq; app.onEvent(type, data); },
-  log(level, event, msg) { this.logCount.total++; if (level === "error") this.logCount.errors++; if (level === "warn") this.logCount.warnings++; if (this.tail) this.emit("log", { time: new Date().toISOString(), level, event, msg }); },
-  buildCatalog() {
-    const rng = mulberry32(20261), counts = new Array(753).fill(1);
-    [1023, 1023, 511, 511, 511, 511, 255, 255, 255, 255, 255, 255, 255, 255, 127, 127, 127, 127, 127, 127, 31, 15, 3, 3]
-      .forEach((g, i) => { counts[i] += g; }); // 753 ranges, exactly 7,697 blocks
-    const anchors = [["104.16.0.0", 2048], ["104.24.0.0", 1024], ["172.64.0.0", 2048], ["172.68.0.0", 1024], ["162.158.0.0", 512], ["188.114.0.0", 256], ["104.18.0.0", 256], ["198.41.0.0", 128], ["103.21.0.0", 128], ["141.101.0.0", 128], ["108.162.0.0", 64], ["190.93.0.0", 64], ["197.234.0.0", 32], ["173.245.0.0", 32], ["159.60.0.0", 32], ["103.31.0.0", 16], ["185.93.0.0", 16]];
-    const cursors = anchors.map(([b]) => ipToInt(b));
-    const order = counts.map((c, i) => [c, i]).sort((a, b) => b[0] - a[0]);
-    const ranges = new Array(753);
-    for (const [size, i] of order) {
-      const ai = anchors.findIndex(([, cap], k) => cursors[k] + size * 256 <= ipToInt(anchors[k][0]) + cap * 256);
-      const base = cursors[ai]; cursors[ai] += size * 256;
-      ranges[i] = { cidr: intToIp(base) + "/" + (24 - Math.log2(size)), firstBlock: intToIp(base) + "/24", base, blocks: size };
-    }
-    // deterministic shuffle into "catalog order"
-    for (let i = ranges.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [ranges[i], ranges[j]] = [ranges[j], ranges[i]]; }
-    const blocks = []; ranges.forEach((r, ri) => { r.start = blocks.length; for (let k = 0; k < r.blocks; k++) blocks.push({ range: ri, base: r.base + k * 256 }); });
-    this.cat = { ranges, blocks, blocksTotal: 7697, rangesTotal: 753, addressesTotal: 1970432 };
-    // latent path quality: most of the catalog is filtered on this path,
-    // some ranges bloom — the shape Mahan's real runs show.
-    this.latent = new Float32Array(7697); this.half = new Float32Array(7697);
-    this.known = new Uint8Array(7697); this.bestHost = new Uint8Array(7697); this.colo = new Uint8Array(7697);
-    const colos = 8;
-    ranges.forEach((r) => {
-      const q = rng(); const rq = q < 0.5 ? 0.01 + rng() * 0.03 : q < 0.78 ? 0.08 + rng() * 0.22 : 0.45 + rng() * 0.45;
-      for (let k = 0; k < r.blocks; k++) {
-        const i = r.start + k; let p = Math.min(0.97, Math.max(0.002, rq * (0.55 + rng() * 0.9)));
-        this.latent[i] = p;
-        if (rng() < 0.06) this.half[i] = (rng() < 0.5 ? -1 : 1) * (0.45 + rng() * 0.4); // hetero block: halves disagree
-        if (rng() < 0.85) this.known[i] = Math.round(Math.min(1, Math.max(0, p + (rng() - 0.5) * 0.35)) * 255);
-        this.bestHost[i] = 1 + Math.floor(rng() * 254);
-        this.colo[i] = Math.floor(rng() * colos);
-      }
-    });
-    this.state = new Uint8Array(7697); this.heat = new Uint8Array(7697);
-    this.quads = new Uint32Array(7697); this.quadHeat = new Uint32Array(7697);
-    for (let i = 0; i < 7697; i++) if (this.known[i]) this.state[i] = 1;
-  },
-  pHalf(i, h) { const d = this.half[i] / 2; return Math.min(0.99, Math.max(0.001, this.latent[i] + (h ? d : -d))); },
-  blockCidr(i) { const b = this.cat.blocks[i]; return intToIp(b.base) + "/24"; },
-  blockIp(i) { const b = this.cat.blocks[i]; return intToIp(b.base + this.bestHost[i]); },
-  async probe() { return false; },
-  async getCatalog() { if (!this.cat) this.buildCatalog(); const { ranges, blocksTotal, rangesTotal, addressesTotal } = this.cat; return { ranges: ranges.map(({ cidr, firstBlock, blocks }) => ({ cidr, firstBlock, blocks })), blocksTotal, rangesTotal, addressesTotal }; },
-  genomeVecs() { return { blocksTotal: 7697, state: u8ToB64(this.state), heat: u8ToB64(this.heat), quads: u32ToB64(this.quads), quadHeat: u32ToB64(this.quadHeat), known: u8ToB64(this.known) }; },
-  snapshot() {
-    const R = this.run || this.paused;
-    return {
-      server: { version: "0.9.1", platform: (navigator.platform || "local") + " · simulated" },
-      status: { configReady: !!this.cfgDesc, xrayFound: true, verifyEnabled: true, resumeAvailable: !!this.paused },
-      genome: this.genomeVecs(),
-      run: R ? { mode: R.mode, runId: R.runId, status: this.run ? "running" : "paused-done", phase: R.phase, startedAt: R.startedAt, counters: R.counters, genome: R.mode === "hard" ? this.genomeVecs() : undefined, top: this.liveTop() } : null,
-      latest: this.latestReport ? { runId: this.latestReport.runId, finishedAt: this.latestReport.finishedAt, best: this.latestReport.results.slice(0, 5) } : null,
-    };
-  },
-  async getState() { if (!this.cat) this.buildCatalog(); return this.snapshot(); },
-  liveTop() {
-    const R = this.run || this.paused; if (!R || R.mode !== "hard" || !R.att) return [];
-    const rows = [];
-    for (let i = 0; i < 7697; i++) if (R.suc[i] > 0) rows.push(i);
-    rows.sort((a, b) => wilson(R.suc[b], R.att[b]).lower - wilson(R.suc[a], R.att[a]).lower);
-    return rows.slice(0, 30).map((i) => this.eligRow(i, R.att[i], R.suc[i]));
-  },
-  eligRow(i, att, suc) {
-    const w = wilson(suc, att);
-    return { ip: this.blockIp(i), range: this.cat.ranges[this.cat.blocks[i].range].cidr, block: this.blockCidr(i), eligibility: { attempts: att, successes: suc, successRate: att ? +(suc / att).toFixed(3) : 0, confidence95: { lower: +w.lower.toFixed(3), upper: +w.upper.toFixed(3) }, confidence: att >= 8 ? "high" : att >= 3 ? "medium" : "low", handshakeMedianMs: Math.round(60 + (1 - this.latent[i]) * 700), pops: { dominant: ["FRA", "AMS", "LHR", "CDG", "WAW", "IST", "DXB", "SIN"][this.colo[i]] } } };
-  },
-  async getSettings() {
-    if (!this.settingsObj) this.settingsObj = simDefaultSettings();
-    return { settings: JSON.parse(JSON.stringify(this.settingsObj)), catalog: { browsing: [
-      { name: "cloudflare-docs", description: "Cloudflare developer docs — many small same-origin assets" },
-      { name: "cloudflare-blog", description: "Cloudflare blog home — image-heavy page" },
-      { name: "cloudflare-speed", description: "Cloudflare speed landing page" },
-      { name: "cdnjs", description: "cdnjs library index — pure static asset delivery" }],
-      streaming: [
-      { name: "apple-advanced-hevc", description: "Apple advanced HEVC ladder (up to 1080p)" },
-      { name: "apple-bipbop", description: "Apple bipbop HLS ladder — the classic test stream" }] } };
-  },
-  async estimate(s) { const b = (s.browsing.maxBytes || 0) * Math.max(1, (s.browsing.workloads || []).length) + (s.streaming.maxBytes || 0) + (s.load.maxDownloadBytes || 0) + (s.load.uploadBytes || 0); return { perCandidateBytes: b }; },
-  async getReports() { return this.reports.map((r) => ({ runId: r.runId, mode: r.mode, finishedAt: r.finishedAt, size: r.size })); },
-  async getResults(id) { if (!id || id === "latest") return this.latestReport; return this.reports.find((r) => r.runId === id) || null; },
-  async getConfig() { return { stored: !!this.cfgDesc, protected: true, descriptor: this.cfgDesc }; },
-  async getSystem() { return { rows: [
-    { component: t("status.config"), value: this.cfgDesc ? t("status.ready") : t("status.missing"), ok: !!this.cfgDesc },
-    { component: "Node", value: "v22 · simulated", ok: true },
-    { component: t("status.platform"), value: navigator.platform || "—", ok: true },
-    { component: "Xray", value: t("status.found") + " · simulated", ok: true },
-    { component: "Catalog", value: "753 ranges · 7,697 blocks", ok: true },
-    { component: t("status.verify"), value: "SPRT", ok: true }] }; },
-  async getLogs() { return [{ name: "run-sim-latest.ndjson", size: 4096 + this.logCount.total * 118, modified: new Date().toISOString() }]; },
-  async getLogSummary() { return { total: this.logCount.total, errors: this.logCount.errors, warnings: this.logCount.warnings }; },
-  async getBlock(i) {
-    const R = this.run || this.paused, b = this.cat.blocks[i], r = this.cat.ranges[b.range];
-    const att = R && R.att ? R.att[i] : 0, suc = R && R.suc ? R.suc[i] : 0;
-    const hA = R && R.hAtt ? [R.hAtt[0][i], R.hAtt[1][i]] : [0, 0], hS = R && R.hSuc ? [R.hSuc[0][i], R.hSuc[1][i]] : [0, 0];
-    const known = this.known[i] / 255;
-    return { index: i, cidr: this.blockCidr(i), range: r.cidr, lane: b.range + 1,
-      run: att ? { attempts: att, successes: suc, rate: +(suc / att).toFixed(2), lower: +wilson(suc, att).lower.toFixed(2) } : null,
-      primer: { attempts: Math.min(3, att), tier: known > 0.5 ? "skip" : known > 0 ? "confirm" : "full" },
-      halves: { lower: { s: hS[0], n: hA[0] }, upper: { s: hS[1], n: hA[1] }, splitP: att >= 4 && Math.abs((hA[0] ? hS[0] / hA[0] : 0) - (hA[1] ? hS[1] / hA[1] : 0)) >= 0.5 ? 0.03 : 0.31, split: this.state[i] === 7 },
-      reputation: known ? { attempts: 12 + (i % 40), runs: 1 + (i % 3), rate: +known.toFixed(2), lastSeen: "2026-11-18", best: this.blockIp(i), colo: ["FRA", "AMS", "LHR", "CDG", "WAW", "IST", "DXB", "SIN"][this.colo[i]] } : null,
-      candidates: suc ? [this.eligRow(i, att, suc)] : [] };
-  },
-  action(name, body) {
-    return (async () => {
-      if (name === "run") {
-        if (this.run) return { error: "run_active", message: t("note.runActive", { run: this.run.runId }) };
-        if (!this.cfgDesc) return { error: "config_missing", message: t("note.configMissing") };
-        if (body.resume && this.paused) { const R = this.paused; this.paused = null; this.startRun(R); this.emit("run-state", { status: "running", mode: R.mode, runId: R.runId }); return { ok: true, runId: R.runId }; }
-        const R = this.newRun(body.mode); this.startRun(R); return { ok: true, runId: R.runId };
-      }
-      if (name === "stop") { this.stopRun(); return { ok: true }; }
-      if (name === "serverStop") { app.onConn("offline"); return { ok: true }; }
-      if (name === "saveSettings") { this.settingsObj = body; return { ok: true }; }
-      if (name === "defaults") { this.settingsObj = simDefaultSettings(); return { ok: true }; }
-      if (name === "workloads") { return { ok: true }; }
-      if (name === "importConfig") {
-        const uri = String(body || "").trim();
-        if (!/^vless:\/\//i.test(uri) || !uri.includes("@")) return { error: "invalid_uri", message: "Only WebSocket transport is supported for scanning, found: —" };
-        const m = uri.match(/^vless:\/\/([^@]+)@([^:/?#]+):(\d+)([^#]*)(?:#(.*))?$/i);
-        if (!m) return { error: "invalid_uri", message: "Could not parse the VLESS link." };
-        const q = new URLSearchParams((m[4] || "").split("?")[1] || "");
-        this.cfgDesc = { address: m[2], port: +m[3], host: q.get("host") || m[2], sni: q.get("sni") || q.get("host") || "", path: decodeURIComponent(q.get("path") || "/"), transport: q.get("type") || "ws", security: q.get("security") || "tls", label: m[5] ? decodeURIComponent(m[5]) : null, idPresent: Boolean(m[1]) };
-        if (this.cfgDesc.transport !== "ws") return { error: "transport", message: "Only WebSocket transport is supported for scanning, found: " + this.cfgDesc.transport };
-        return { ok: true, descriptor: this.cfgDesc };
-      }
-      if (name === "removeConfig") { if (this.run) return { error: "run_active", message: t("cfg.removeNote") }; this.cfgDesc = null; return { ok: true }; }
-      return { error: "unknown", message: name };
-    })();
-  },
-  connect() { /* the sim emits only while a run or the tail is live */ },
-  disconnect() { },
-  setTail(on) { this.tail = on; if (on) this.log("info", "web.tail", "live tail subscribed (simulated)"); },
-  newRun(mode) {
-    const runId = "sim-" + String(++this.runCounter).padStart(4, "0");
-    const R = { mode, runId, startedAt: new Date().toISOString(), phase: "calibrating", tick: 0,
-      counters: { completed: 0, total: 0, eligible: 0, failed: 0, probesSpent: 0, primerProbes: 0, expansionProbes: 0, reserveProbes: 0, blocksPrimed: 0, blocksExpanded: 0, blocksSplit: 0, elapsedMs: 0 },
-      // Fixed seed (the settings default, 404): the sim is the contract's
-      // reference implementation, so every run replays identically — the
-      // reproducible smoke in scripts/web-sim-smoke.mjs depends on it.
-      rng: mulberry32(404) };
-    if (mode === "hard") {
-      R.hard = { ...((this.settingsObj || simDefaultSettings()).hard) };
-      R.att = new Uint16Array(7697); R.suc = new Uint16Array(7697);
-      R.expProbes = new Uint16Array(7697); R.lowWaves = 0; R.expStop = null;
-      R.hAtt = [new Uint16Array(7697), new Uint16Array(7697)]; R.hSuc = [new Uint16Array(7697), new Uint16Array(7697)];
-      R.pending = []; R.po = this.primerOrder(); R.poIdx = 0; R.suspects = []; R.covIdx = 0; R.wave = 0; R.finIdx = 0; R.laneIdx = 0;
-      for (let i = 0; i < 7697; i++) { this.state[i] = this.known[i] ? 1 : 0; this.heat[i] = 0; this.quads[i] = 0; this.quadHeat[i] = 0; }
-    } else {
-      const P = { quick: { n: 16, rounds: 2, fin: 6, tun: 3, tunRounds: 1 }, full: { n: 120, rounds: 3, fin: 20, tun: 5, tunRounds: 1 }, research: { n: 240, rounds: 6, fin: 24, tun: 8, tunRounds: 3 } }[mode];
-      R.prof = P; R.cands = []; R.ci = 0; R.sprtIdx = 0; R.tunIdx = 0;
-      const used = new Set();
-      for (let k = 0; k < P.n; k++) {
-        let i; do { i = Math.floor(R.rng() * 7697); } while (used.has(i) || (R.rng() < 0.7 && this.latent[i] < 0.05));
-        used.add(i);
-        R.cands.push({ block: i, ip: intToIp(this.cat.blocks[i].base + 1 + Math.floor(R.rng() * 254)), att: 0, suc: 0, stage: { elig: 0, sprt: 0, tun: 0 }, ms: 60 + R.rng() * 700 });
-      }
-    }
-    return R;
-  },
-  primerOrder() { // stratified: range round-robin, 3 passes — origins ignite everywhere at once
-    const order = [], maxSize = Math.max(...this.cat.ranges.map((r) => r.blocks));
-    const strat = [];
-    for (let k = 0; k < maxSize; k++) for (const r of this.cat.ranges) if (k < r.blocks) strat.push(r.start + k);
-    for (let p = 0; p < 3; p++) order.push(...strat);
-    return order;
-  },
-  startRun(R) {
-    this.run = R;
-    this.emit("run-state", { status: "running", mode: R.mode, runId: R.runId });
-    this.emit("phase", { phase: R.phase, startedAt: Date.now() });
-    this.log("info", "run.start", R.mode + " " + R.runId);
-    app.showNotice(t("tick.started", { run: R.runId, mode: t("mode." + R.mode) }), "info");
-    clearInterval(this.timer);
-    this.timer = setInterval(() => this.tick(), 250);
-  },
-  stopRun() {
-    if (!this.run) return;
-    clearInterval(this.timer); this.timer = null;
-    const R = this.run; this.run = null; this.paused = R.phase === "complete" ? null : R;
-    this.emit("run-state", { status: R.phase === "complete" ? "complete" : "paused-done", mode: R.mode, runId: R.runId });
-    this.log("warn", "run.stop", R.runId);
-  },
-  finishRun(R, rows) {
-    const rep = { schema: 10, runId: R.runId, mode: R.mode, startedAt: R.startedAt, finishedAt: new Date().toISOString(),
-      totals: { candidates: rows.length, eligible: rows.filter((r) => r.eligibility.successRate > 0).length, complete: rows.filter((r) => r.measurement.status === "complete").length, partial: rows.filter((r) => r.measurement.status === "partial").length },
-      results: rows, size: 0 };
-    rep.size = JSON.stringify(rep).length;
-    this.latestReport = rep; this.reports.unshift(rep);
-    if (R.mode === "hard") for (let i = 0; i < 7697; i++) if (R.att[i]) this.known[i] = Math.round(255 * R.suc[i] / R.att[i]);
-    this.emit("ticker", { text: t("tick.repSaved") });
-    this.emit("ticker", { text: t("tick.complete", { eligible: rep.totals.eligible }) });
-    this.log("info", "run.complete", R.runId);
-    this.stopRun();
-  },
-  probeOnce(R, i, half, counted = true) {
-    const ok = R.rng() < this.pHalf(i, half);
-    R.att[i]++; R.hAtt[half][i]++; if (ok) { R.suc[i]++; R.hSuc[half][i]++; }
-    // `counted` tracks the screening budget (primer + reserve +
-    // expansion), the only thing budgetProbes caps in the real engine;
-    // finalize retries pass false — they are bounded by retryLimit.
-    if (counted) R.counters.probesSpent++;
-    return ok;
-  },
-  tracePush(R, ok, ms, recovered) { this.emit("trace", { points: [[recovered ? "recovered" : ok ? "ok" : R.rng() < 0.003 ? "error" : "timeout", Math.round(ms)]] }); },
-  tick() {
-    const R = this.run; if (!R) return;
-    R.tick++; R.counters.elapsedMs = R.tick * 250;
-    if (R.mode === "hard") this.tickHard(R); else this.tickScan(R);
-    this.emit("counters", { ...R.counters });
-  },
-};
-function simDefaultSettings() {
-  const MIB = 1048576;
-  return { version: 7,
-    scan: { perRange: 3, maxCandidates: 120, rounds: 3, concurrency: 12, timeoutMs: 6000, minimumSuccessRate: 0.6, seed: 404, delayedRetry: { enabled: true, maxCandidates: 60 } },
-    verification: { enabled: true, limit: 20, sprt: { p0: 0.6, p1: 0.9, alpha: 0.05, beta: 0.1, minRounds: 2, maxRounds: 16 } },
-    calibration: { enabled: true, levels: [1, 2, 4, 8, 12, 16], latencyInflationLimit: 0.1, failureRateIncreaseLimit: 0.1, eventLoopLagLimitMs: 50 },
-    tunnel: { enabled: true, xrayPath: "auto", limit: 5, rounds: 1, startupTimeoutMs: 8000, shutdownGraceMs: 1500 },
-    browsing: { enabled: true, workloads: ["cloudflare-docs", "cdnjs"], assetLimit: 10, timeoutMs: 20000, maxSockets: 1, maxBytes: 5 * MIB, estimatedMaxBytes: 5 * MIB },
-    streaming: { enabled: true, workloads: ["apple-advanced-hevc"], maxSegments: 4, quickSegments: 2, researchSegments: 6, maxBytes: 12 * MIB, estimatedMaxBytes: 12 * MIB, startupBufferSec: 4, safetyFactor: 1.25, timeoutMs: 30000, variantMode: "fixed", targetMbps: 6 },
-    load: { enabled: true, durationMs: 8000, chunkBytes: MIB, maxDownloadBytes: 12 * MIB, flows: 4, uploadBytes: MIB, uploadFlows: 1, fanoutRequests: 4, idleSamples: 2, timeoutMs: 7000, gateProfile: "tolerant", endpoints: { download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up", ping: "https://speed.cloudflare.com/__down?bytes=1000", control: "https://ash-speed.hetzner.com/100MB.bin" }, control: { enabled: false, bytes: 6 * MIB }, gates: {} },
-    hard: { concurrency: 12, screeningRounds: 1, recheckTop: 20, saveEvery: 25, liveTop: 30, finalTop: 200, delayedRetry: true, retryLimit: 5000, engine: "blocks", primerPerBlock: 3, budgetProbes: 72000, banditExploration: 1, maxDepthPerBlock: 32, expansionWaveFactor: 10, expansionChunk: 4, rangeWaveCapFraction: 0.25, poolPerBlock: 8, recheckPerBlock: 4, splitMaxDepth: 2, splitAlpha: 0.05, splitMinEffect: 0.5, splitReserveFraction: 0.85, splitReserveAlpha: 0.25, reputationSkipAgeDays: 3, reputationConfirmAgeDays: 21, reputationHalfLifeDays: 14, reputationMaxStoredAttempts: 64 },
-    customWorkloads: { browsing: [], streaming: [] }, logging: { level: "info" } };
-}
-
-/* ---------------- sim run machines ---------------- */
-Object.assign(Sim, {
-  setPhase(R, p) { R.phase = p; this.emit("phase", { phase: p, startedAt: Date.now() }); this.log("info", "phase", p); },
-  mark(R, i) { (R.dirty || (R.dirty = new Map())).set(i, 1); },
-  flush(R) {
-    if (!R.dirty || !R.dirty.size) return;
-    const deltas = [];
-    for (const i of R.dirty.keys()) deltas.push(this.state[i] === 7 ? [i, 7, this.heat[i], this.quads[i], this.quadHeat[i]] : [i, this.state[i], this.heat[i]]);
-    R.dirty.clear();
-    this.emit("blocks", { deltas });
-  },
-  resolvePending(R) {
-    for (const { i, half } of R.pending) {
-      const ok = this.probeOnce(R, i, half);
-      R.counters.primerProbes++; R.resolved++;
-      this.tracePush(R, ok, ok ? 50 + R.rng() * 800 : 6000, false);
-      this.state[i] = R.suc[i] > 0 ? 3 : 4; this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]); this.mark(R, i);
-    }
-    R.pending = [];
-    R.counters.completed = R.resolved; R.counters.total = R.po.length;
-    R.counters.eligible = 0; for (let i = 0; i < 7697; i++) if (R.suc[i] > 0) R.counters.eligible++;
-  },
-  expansionWave(R) {
-    // One expansion wave, mirroring the real engine (hard-engine.js
-    // runExpansionPhase + bandit.js rankBlocks / allocateWave /
-    // evaluateMarginalGain): a wave is expansionWaveFactor × concurrency
-    // probes (10 × 12 = 120), granted in passes of expansionChunk (4) in
-    // Wilson-UCB order (index desc, fewer attempts, lower index), no
-    // range taking more than rangeWaveCapFraction (25%) of a wave, and
-    // a block's run depth capped at maxDepthPerBlock (32) probes. The
-    // phase ends on the total budget, on exhaustion, or when the best
-    // expandable block's index stays under the pool threshold τ for two
-    // consecutive waves (marginal gain). Parked blocks (≥6 probes,
-    // index < 0.3) are served only from a τ=0 wave's leftovers, exactly
-    // as allocateWave does.
-    const H = R.hard, budget = H.budgetProbes;
-    if (R.counters.probesSpent >= budget) { this.expansionStop(R, "budget"); return 0; }
-    // τ (spec §4.4): the Wilson lower bound of the pool's rank-#finalTop
-    // candidate. The engine's pool holds per-ADDRESS candidates, and a
-    // drawn address is probed exactly once during screening — so a
-    // successful candidate's summary is 1/1, and once at least finalTop
-    // successes exist (the pool is full) τ sits at that lower bound,
-    // ≈ 0.2065. It is NOT the block-aggregate lower: blocks deepen, but
-    // candidates do not, which is why the real phase is budget-driven
-    // on any path with a few hundred live addresses.
-    let successes = 0;
-    for (let i = 0; i < 7697; i++) successes += R.suc[i];
-    const tau = successes >= H.finalTop ? wilson(1, 1).lower : 0;
-    const ranked = [];
-    for (let i = 0; i < 7697; i++) {
-      if (this.state[i] === 7) continue; // split parent: retired — its evidence lives in the children
-      ranked.push({ i, ucb: wilson(R.suc[i], R.att[i]).upper, att: R.att[i], range: this.cat.blocks[i].range });
-    }
-    ranked.sort((a, b) => (b.ucb - a.ucb) || (a.att - b.att) || (a.i - b.i));
-    const depthLeft = (s) => H.maxDepthPerBlock - s.att;
-    const best = ranked.find((s) => depthLeft(s) > 0);
-    if (!best) { this.expansionStop(R, "exhausted"); return 0; }
-    if (best.ucb < tau) {
-      R.lowWaves = (R.lowWaves || 0) + 1;
-      if (R.lowWaves >= 2) this.expansionStop(R, "marginal-gain");
-      return 0;
-    }
-    R.lowWaves = 0;
-    const eligible = [], parked = [];
-    for (const s of ranked) {
-      if (depthLeft(s) <= 0) continue;
-      if (tau === 0 && s.att >= 6 && s.ucb < 0.3) parked.push(s);
-      else if (s.ucb >= tau) eligible.push(s);
-    }
-    const waveSize = Math.min(H.expansionWaveFactor * H.concurrency, budget - R.counters.probesSpent);
-    const rangeCapApplies = new Set(eligible.map((s) => s.range)).size >= 4;
-    const rangeCap = Math.ceil(H.rangeWaveCapFraction * waveSize);
-    const grants = new Map(), rangeSpent = new Map();
-    let waveLeft = waveSize;
-    const grantPasses = (list) => {
-      let progressed = true;
-      while (waveLeft > 0 && progressed) {
-        progressed = false;
-        for (const s of list) {
-          if (waveLeft <= 0) break;
-          const already = grants.get(s.i) || 0;
-          let grant = Math.min(H.expansionChunk, depthLeft(s) - already, waveLeft);
-          if (rangeCapApplies) grant = Math.min(grant, rangeCap - (rangeSpent.get(s.range) || 0));
-          if (grant <= 0) continue;
-          grants.set(s.i, already + grant);
-          rangeSpent.set(s.range, (rangeSpent.get(s.range) || 0) + grant);
-          waveLeft -= grant; progressed = true;
-        }
-      }
-    };
-    grantPasses(eligible);
-    if (waveLeft > 0) grantPasses(parked);
-    if (!grants.size) { this.expansionStop(R, "exhausted"); return 0; }
-    R.wave++;
-    let waveProbes = 0; const points = [];
-    for (const s of ranked) {
-      const grant = grants.get(s.i); if (!grant) continue;
-      const i = s.i;
-      this.state[i] = 5; this.mark(R, i);
-      if (!R.expProbes[i]) R.counters.blocksExpanded++; // the report's definition: expansionProbes > 0
-      R.expProbes[i] += grant;
-      for (let k = 0; k < grant; k++) {
-        const ok = this.probeOnce(R, i, R.rng() < 0.5 ? 0 : 1);
-        R.counters.expansionProbes++; waveProbes++;
-        points.push([ok ? "ok" : R.rng() < 0.003 ? "error" : "timeout", Math.round(ok ? 50 + R.rng() * 800 : 6000)]);
-      }
-      this.state[i] = R.att[i] >= H.maxDepthPerBlock ? 8 : 3;
-      this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]);
-      this.mark(R, i);
-    }
-    if (points.length) this.emit("trace", { points });
-    this.emit("ticker", { text: t("tick.wave", { wave: R.wave, probes: waveProbes, spent: fmt(R.counters.probesSpent), total: fmt(budget) }) });
-    this.log("info", "hard.engine.wave", "wave " + R.wave);
-    if (R.counters.probesSpent >= budget) this.expansionStop(R, "budget");
-    return waveProbes;
-  },
-  expansionStop(R, reason) {
-    R.expStop = reason;
-    this.log("info", "hard.engine.expansion.stop", reason);
-    this.setPhase(R, "hard-retry");
-  },
-  tickHard(R) {
-    const K = 90 * this.speed;
-    if (R.phase === "calibrating") { this.emit("ticker", { text: t("tick.calibrated", { n: 12 }) }); this.setPhase(R, "hard-primer"); R.resolved = 0; return; }
-    if (R.phase === "hard-primer") {
-      if (R.pending.length) this.resolvePending(R);
-      if (R.poIdx < R.po.length) {
-        const batch = R.po.slice(R.poIdx, R.poIdx + K); R.poIdx += batch.length;
-        R.pending = batch.map((i) => { if (!R.att[i] && !R.suc[i]) { this.state[i] = 2; this.mark(R, i); } return { i, half: R.rng() < 0.5 ? 0 : 1 }; });
-      } else if (!R.pending.length) {
-        let alive = 0; for (let i = 0; i < 7697; i++) if (R.suc[i] > 0) alive++;
-        R.counters.blocksPrimed = 7697;
-        this.emit("ticker", { text: t("tick.primerDone", { alive: fmt(alive), blocks: fmt(7697) }) });
-        R.suspects = [];
-        for (let i = 0; i < 7697; i++) {
-          const a0 = R.hAtt[0][i], a1 = R.hAtt[1][i];
-          if (a0 >= 1 && a1 >= 1 && Math.abs((a0 ? R.hSuc[0][i] / a0 : 0) - (a1 ? R.hSuc[1][i] / a1 : 0)) >= 0.5) R.suspects.push(i);
-        }
-        R.suspects.sort((a, b) => R.att[b] - R.att[a]); R.suspects = R.suspects.slice(0, 400);
-        this.setPhase(R, "hard-coverage");
-      }
-      this.flush(R); return;
-    }
-    if (R.phase === "hard-coverage") {
-      const batch = R.suspects.slice(R.covIdx, R.covIdx + Math.max(4, Math.floor(K / 24)));
-      for (const i of batch) {
-        if (this.state[i] !== 7) { this.state[i] = 6; this.mark(R, i); }
-        const less = R.hAtt[0][i] <= R.hAtt[1][i] ? 0 : 1;
-        this.probeOnce(R, i, less); this.probeOnce(R, i, 1 - less); R.counters.reserveProbes += 2;
-        const a0 = R.hAtt[0][i], a1 = R.hAtt[1][i], r0 = a0 ? R.hSuc[0][i] / a0 : 0, r1 = a1 ? R.hSuc[1][i] / a1 : 0;
-        if (Math.min(a0, a1) >= 2 && Math.abs(r0 - r1) >= 0.5) {
-          const cs = (s, a) => (a ? (s ? 3 : 4) : 0), ch = (s, a) => (a ? Math.round(255 * s / a) : 0);
-          let q = [cs(R.hSuc[0][i], a0), cs(R.hSuc[0][i], a0), cs(R.hSuc[1][i], a1), cs(R.hSuc[1][i], a1)];
-          let qh = [ch(R.hSuc[0][i], a0), ch(R.hSuc[0][i], a0), ch(R.hSuc[1][i], a1), ch(R.hSuc[1][i], a1)];
-          if (R.rng() < 0.25) { const col = r0 < r1 ? 0 : 2; q[col] = this.pHalf(i, col ? 1 : 0) > 0.3 ? 3 : 4; qh[col] = Math.round(255 * Math.min(1, this.pHalf(i, col ? 1 : 0) + 0.15)); }
-          this.quads[i] = (q[0] | (q[1] << 8) | (q[2] << 16) | (q[3] << 24)) >>> 0;
-          this.quadHeat[i] = (qh[0] | (qh[1] << 8) | (qh[2] << 16) | (qh[3] << 24)) >>> 0;
-          this.state[i] = 7; R.counters.blocksSplit++;
-        } else { this.state[i] = R.suc[i] > 0 ? 3 : 4; this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]); }
-        this.mark(R, i);
-      }
-      R.covIdx += batch.length;
-      if (R.covIdx >= R.suspects.length) {
-        this.emit("ticker", { text: t("tick.coverage", { suspects: fmt(R.suspects.length), split: fmt(R.counters.blocksSplit) }) });
-        this.setPhase(R, "hard-expansion");
-      }
-      this.flush(R); return;
-    }
-    if (R.phase === "hard-expansion") {
-      // Whole waves until the tick's probe quota is spent — a wave is
-      // the unit of work in the real engine too (see expansionWave).
-      let quota = 90 * this.speed;
-      while (quota > 0 && R.phase === "hard-expansion") {
-        const spent = this.expansionWave(R);
-        if (spent <= 0) break;
-        quota -= spent;
-      }
-      this.flush(R); return;
-    }
-    if (R.phase === "hard-retry") {
-      if (!R.retried) {
-        R.retried = true; let recovered = 0, tried = 0;
-        for (let i = 0; i < 7697 && tried < 240; i++) if (this.state[i] === 4) { tried++; const ok = this.probeOnce(R, i, R.rng() < 0.5 ? 0 : 1, false); this.tracePush(R, ok, ok ? 120 + R.rng() * 600 : 6000, ok); if (ok) { recovered++; this.state[i] = 3; this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]); this.mark(R, i); } }
-        R.recovered = recovered;
-      } else {
-        this.emit("ticker", { text: t("tick.retries", { n: fmt(R.recovered || 0) }) });
-        const alive = []; for (let i = 0; i < 7697; i++) if (R.suc[i] > 0) alive.push(i);
-        alive.sort((a, b) => wilson(R.suc[b], R.att[b]).lower - wilson(R.suc[a], R.att[a]).lower);
-        R.finalists = alive.slice(0, 200); R.finIdx = 0;
-        this.setPhase(R, "hard-verify");
-      }
-      this.flush(R); return;
-    }
-    if (R.phase === "hard-verify") {
-      const batch = R.finalists.slice(R.finIdx, R.finIdx + 40);
-      for (const i of batch) { this.state[i] = 9; this.mark(R, i); }
-      R.finIdx += batch.length;
-      if (R.finIdx >= R.finalists.length) { this.emit("ticker", { text: t("tick.pool", { n: fmt(R.finalists.length) }) }); R.laneIdx = 0; this.setPhase(R, "hard-finalize"); }
-      this.flush(R); return;
-    }
-    if (R.phase === "hard-finalize") {
-      const top = R.finalists.slice(0, 5);
-      if (R.laneIdx < top.length) {
-        const i = top[R.laneIdx];
-        const ev = this.simEvidence(R, i);
-        this.emit("candidate", { row: this.makeRow(this.blockIp(i), i, R.att[i], R.suc[i], ev), lane: true });
-        if (R.laneIdx < 3) { this.state[i] = 10; this.mark(R, i); }
-        R.laneIdx++;
-      } else {
-        const rows = R.finalists.slice(0, 40).map((i, k) => this.makeRow(this.blockIp(i), i, R.att[i], R.suc[i], k < 5 ? this.simEvidence(R, i) : null));
-        this.flush(R);
-        this.finishRun(R, this.sortRows(rows));
-        return;
-      }
-      this.flush(R); return;
-    }
-  },
-  simEvidence(R, i) {
-    const p = this.latent[i];
-    return { transfer: Math.round(40 + p * 55), streamingMbps: +(1 + p * 9).toFixed(1), loadMbps: +(0.8 + p * 11).toFixed(1), rpm: Math.round(60 + p * 700), shaping: +(0.5 + p * 0.45).toFixed(2), rttInc: Math.round(30 + (1 - p) * 260) };
-  },
-  makeRow(ip, blockIdx, att, suc, ev) {
-    const w = wilson(suc, att), rate = att ? suc / att : 0;
-    const base = { ip, range: this.cat.ranges[this.cat.blocks[blockIdx].range].cidr, block: this.blockCidr(blockIdx),
-      eligibility: { attempts: att, successes: suc, successRate: +rate.toFixed(3), confidence95: { lower: +w.lower.toFixed(3), upper: +w.upper.toFixed(3) }, confidence: att >= 8 ? "high" : att >= 3 ? "medium" : "low", handshakeMedianMs: Math.round(60 + (1 - this.latent[blockIdx]) * 700), pops: { dominant: ["FRA", "AMS", "LHR", "CDG", "WAW", "IST", "DXB", "SIN"][this.colo[blockIdx]] } } };
-    if (ev) {
-      const overall = Math.max(0, Math.min(99, Math.round(28 + 58 * w.lower + Math.min(14, ev.loadMbps))));
-      return { ...base, verdict: { label: overall >= 80 ? "recommended" : overall >= 60 ? "good" : "usable" },
-        scores: { conservative: Math.round(overall * (0.82 + 0.18 * rate)), conservativeUncapped: Math.round(overall * (0.82 + 0.18 * rate)), overall, overallUncapped: overall },
-        load: { sustainedMbps: ev.loadMbps, rpm: ev.rpm, shapingRatio: ev.shaping, rttIncreaseMs: ev.rttInc },
-        streaming: { sustainableMbps: ev.streamingMbps }, gates: { status: ev.loadMbps >= 2 ? "pass" : ev.loadMbps >= 1 ? "warn" : "fail", limiting: ev.loadMbps < 2 ? "sustainedMbps" : null },
-        measurement: { status: "complete", bytesMeasured: 30 * 1048576 + blockIdx * 977, qoeConfidence: "measured" } };
-    }
-    const overall = Math.min(70, Math.round(75 * rate));
-    return { ...base, verdict: { label: suc ? "partial" : "unmeasured" },
-      scores: { conservative: Math.round(overall * (0.8 + 0.2 * rate)), conservativeUncapped: Math.round(overall * (0.8 + 0.2 * rate)), overall, overallUncapped: overall },
-      load: null, streaming: null, gates: { status: "unknown", limiting: suc ? "load" : "eligibility" },
-      measurement: { status: suc ? "partial" : "unmeasured", bytesMeasured: 0, qoeConfidence: "provisional" } };
-  },
-  sortRows(rows) { const rank = { complete: 0, partial: 1, unmeasured: 2 }; return rows.sort((a, b) => (rank[a.measurement.status] - rank[b.measurement.status]) || (b.scores.conservative - a.scores.conservative)); },
-  tickScan(R) {
-    const K = 4 + this.speed, P = R.prof;
-    if (R.phase === "calibrating") { this.emit("ticker", { text: t("tick.calibrated", { n: 12 }) }); R.counters.total = P.n * P.rounds; this.setPhase(R, "screening"); return; }
-    if (R.phase === "screening") {
-      for (let k = 0; k < K && R.ci < P.n * P.rounds; k++, R.ci++) {
-        const c = R.cands[R.ci % P.n];
-        c.p ??= Math.min(0.97, Math.max(0.01, this.latent[c.block] * (0.7 + R.rng() * 0.6)));
-        const ok = R.rng() < c.p; c.att++; if (ok) c.suc++;
-        this.tracePush(R, ok, ok ? c.ms : 6000, false);
-        if (c.att === P.rounds) { c.stage.elig = 1; this.emit("candidate", { row: this.scanRow(R, c) }); }
-      }
-      R.counters.completed = R.ci; R.counters.eligible = R.cands.filter((c) => c.suc > 0).length;
-      if (R.ci >= P.n * P.rounds) { R.retryList = R.cands.filter((c) => c.suc === 0); R.ri = 0; R.counters.total = R.retryList.length; R.counters.completed = 0; this.setPhase(R, "delayed-retry"); }
-      return;
-    }
-    if (R.phase === "delayed-retry") {
-      for (let k = 0; k < K && R.ri < R.retryList.length; k++, R.ri++) { const c = R.retryList[R.ri]; const ok = R.rng() < c.p; c.att++; if (ok) { c.suc++; this.tracePush(R, ok, c.ms, true); this.emit("candidate", { row: this.scanRow(R, c) }); } }
-      R.counters.completed = R.ri;
-      if (R.ri >= R.retryList.length) {
-        R.fin = R.cands.filter((c) => c.suc > 0).sort((a, b) => wilson(b.suc, b.att).lower - wilson(a.suc, a.att).lower).slice(0, P.fin);
-        R.fin.forEach((c) => { c.llr = 0; c.rounds = 0; c.decided = null; });
-        R.counters.total = R.fin.length; R.counters.completed = 0; this.setPhase(R, "verification");
-      }
-      return;
-    }
-    if (R.phase === "verification") {
-      let open = 0;
-      for (const c of R.fin) {
-        if (c.decided) continue; open++;
-        const ok = R.rng() < c.p; c.rounds++; c.llr += ok ? 0.405 : -1.386;
-        c.stage.sprt = c.rounds / 16;
-        if (c.llr >= 2.89) c.decided = "accept"; else if (c.llr <= -2.251) c.decided = "reject"; else if (c.rounds >= 16) c.decided = "inconclusive";
-        if (c.decided) this.emit("candidate", { row: this.scanRow(R, c) });
-      }
-      R.counters.completed = R.fin.filter((c) => c.decided).length;
-      if (!open || R.fin.every((c) => c.decided)) { R.tun = R.fin.filter((c) => c.decided !== "reject").slice(0, P.tun); R.tunIdx = 0; R.counters.total = R.tun.length * P.tunRounds; R.counters.completed = 0; this.setPhase(R, "tunnel"); }
-      return;
-    }
-    if (R.phase === "tunnel") {
-      const c = R.tun[Math.floor(R.tunIdx / P.tunRounds)];
-      if (c) { c.tunRoundsDone = (c.tunRoundsDone || 0) + 1; c.stage.tun = c.tunRoundsDone / P.tunRounds; R.tunIdx++; R.counters.completed = R.tunIdx;
-        if (c.tunRoundsDone >= P.tunRounds) this.emit("candidate", { row: this.scanRow(R, c, true) }); }
-      if (R.tunIdx >= R.tun.length * P.tunRounds) {
-        const rows = R.cands.filter((c) => c.suc > 0).map((c) => this.scanRow(R, c, R.tun.includes(c)));
-        this.finishRun(R, this.sortRows(rows));
-      }
-      return;
-    }
-  },
-  scanRow(R, c, full) {
-    const ev = full ? { transfer: 0, streamingMbps: +(1 + c.p * 9).toFixed(1), loadMbps: +(0.8 + c.p * 11).toFixed(1), rpm: Math.round(60 + c.p * 700), shaping: +(0.5 + c.p * 0.45).toFixed(2), rttInc: Math.round(30 + (1 - c.p) * 260) } : null;
-    const row = this.makeRow(c.ip, c.block, c.att, c.suc, ev);
-    row.stage = { ...c.stage }; row.sprt = c.decided || (c.rounds ? "rounds " + c.rounds : null);
-    return row;
-  },
-});
-
 /* ---------------- app store & event plumbing ---------------- */
 const app = {
   src: null, state: null, catalog: null, conn: "connecting",
   runStatus: "idle", runMode: null, runId: null, phase: null, counters: {}, startedAt: 0,
+  stopping: false, offline: false, serverStopped: false, runStartedAtMs: 0, viewParts: [], runError: null,
   genome: null, // {state, heat, quads, quadHeat, known} Uint arrays, 7,697 cells
   tracePts: [], ticker: [], ledger: new Map(), lane: [], logs: [],
   lastSeq: 0, view: null, viewName: "",
   onConn(s) {
     this.conn = s;
     const pill = $("#conn-pill");
-    if (this.src && this.src.kind === "sim") { pill.textContent = t("conn.sim"); pill.className = "pill"; }
-    else if (s === "live") { pill.textContent = t("conn.live"); pill.className = "pill pill-live"; }
+    if (s === "live") { pill.textContent = t("conn.live"); pill.className = "pill pill-live"; }
     else if (s === "offline") { pill.textContent = t("conn.offline"); pill.className = "pill pill-off"; this.showNotice(t("note.serverStopped"), "info"); }
+    else if (s === "none") { pill.textContent = t("conn.none"); pill.className = "pill pill-off"; }
     else { pill.textContent = t("conn.reconnecting"); pill.className = "pill pill-off"; }
     if (s === "live") this.resync();
   },
@@ -884,15 +442,26 @@ const app = {
     clearTimeout(this._noticeT); this._noticeT = setTimeout(() => { n.hidden = true; }, 9000);
   },
   async resync() {
-    try { const s = await this.src.getState(); this.applySnapshot(s); } catch { /* server gone; pill already says so */ }
+    // Snapshots are fetched concurrently (event resyncs, view
+    // mounts, reconnects) and may resolve out of order; only the
+    // newest fetch may apply, or a snapshot taken while the run was
+    // live can land after its terminal event and resurrect it.
+    const token = (this._resyncSeq = (this._resyncSeq || 0) + 1);
+    try { const s = await this.src.getState(); if (token !== this._resyncSeq) return; this.applySnapshot(s); } catch { /* server gone; pill already says so */ }
   },
   applySnapshot(s) {
     this.state = s;
     if (s.server && s.server.version) $("#version").textContent = "v" + s.server.version;
     const g = (s.run && s.run.genome) || s.genome;
     if (g) this.genome = { state: b64ToU8(g.state), heat: b64ToU8(g.heat), quads: b64ToU32(g.quads), quadHeat: g.quadHeat ? b64ToU32(g.quadHeat) : new Uint32Array(7697), known: b64ToU8(g.known) };
-    if (s.run) { this.runStatus = s.run.status; this.runMode = s.run.mode; this.runId = s.run.runId; this.phase = s.run.phase; this.counters = s.run.counters || {}; }
-    else this.runStatus = s.status && s.status.resumeAvailable ? "paused-done" : this.runStatus === "complete" ? "complete" : "idle";
+    // A snapshot whose fetch began before a run ended can still
+    // carry that run as "running"; the terminal run-state event is
+    // newer truth for the same runId and wins (backend truth is the
+    // terminal status the state store now also serves at rest, so
+    // this guard only ever fires on the in-flight race).
+    if (s.run && s.run.status === "running" && s.run.runId === this.runId && ["complete", "canceled", "failed", "paused-done"].includes(this.runStatus)) s.run = { ...s.run, status: this.runStatus };
+    if (s.run) { this.runStatus = s.run.status; this.runMode = s.run.mode; this.runId = s.run.runId; this.phase = s.run.phase; this.counters = s.run.counters || {}; if (s.run.error) this.runError = s.run.error; if (s.run.status === "running") this.runError = null; const started = Date.parse(s.run.startedAt); if (Number.isFinite(started)) this.runStartedAtMs = started; }
+    else { this.runStatus = s.status && s.status.resumeAvailable ? "paused-done" : this.runStatus === "complete" ? "complete" : "idle"; if (this.runStatus !== "running") this.stopping = false; }
     this.refreshChrome();
     if (this.view && this.view.onSnapshot) this.view.onSnapshot(s);
   },
@@ -906,12 +475,17 @@ const app = {
     if (type === "trace") { this.tracePts.push(...d.points); if (this.tracePts.length > 400) this.tracePts.splice(0, this.tracePts.length - 400); }
     if (type === "ticker") { this.ticker.unshift(d.text); this.ticker = this.ticker.slice(0, 40); this.refreshNotes(); }
     if (type === "candidate") { this.ledger.set(d.row.ip, d.row); if (d.lane) this.lane.push(d.row); }
+    if (type === "log" && d.event && d.event.endsWith("calibration.no_control")) { const txt = journalText("log", d); if (txt) this.showNotice(txt); }
     if (type === "run-state") {
-      if (d.status === "running" && d.runId !== this._lastRunId) { this.ledger.clear(); this.lane = []; this.tracePts = []; }
+      if (d.status === "running") this.runError = null;
+      if (d.error) this.runError = d.error;
+      if (d.status === "running" && d.runId !== this._lastRunId) { this.ledger.clear(); this.lane = []; this.tracePts = []; this.runStartedAtMs = Date.now(); }
       this._lastRunId = d.runId;
       this.runStatus = d.status; this.runMode = d.mode; this.runId = d.runId;
-      if (d.status === "complete" || d.status === "paused-done" || d.status === "failed") setTimeout(() => this.resync(), 350);
+      if (d.status !== "running") this.stopping = false;
+      if (d.status === "complete" || d.status === "paused-done" || d.status === "failed" || d.status === "canceled") setTimeout(() => this.resync(), 350);
       if (d.status === "paused-done") this.showNotice(t("note.stopped"), "info");
+      if (d.status === "canceled") this.showNotice(t("note.canceled"), "info");
       if (d.status === "failed") this.showNotice(t("note.failed"));
     }
     this.refreshChrome();
@@ -930,14 +504,18 @@ const app = {
     this._notesSig = sig; this._notesAt = now;
     el.innerHTML = top.length ? top.map((x) => `<div>${esc(x)}</div>`).join("") : esc(t("run.idle"));
   },
+  // Elapsed time is read off the local clock, never off the last
+  // counters frame: a quiet phase emits nothing for stretches, and a
+  // frozen clock is exactly what makes a live run look dead.
+  elapsedMs() { return this.runStartedAtMs ? Math.max(0, Date.now() - this.runStartedAtMs) : (this.counters.elapsedMs || 0); },
   refreshChrome(force) {
     // Chrome is a summary, not a counter: events arrive per probe, so
     // this renders only when something it shows actually changed, at
     // most twice a second — a trailing render always lands the final
     // state, so nothing visible is ever lost to the throttle.
     const c = this.counters;
-    const sig = [lang, this.runStatus, this.runMode, this.runId, this.phase,
-      Math.floor((c.elapsedMs || 0) / 1000), c.probesSpent || c.completed || 0,
+    const sig = [lang, this.runStatus, this.runMode, this.runId, this.phase, this.stopping, this.viewName, this.viewParts[1] || "",
+      Math.floor(this.elapsedMs() / 1000), c.probesSpent || c.completed || 0,
       ((this.state || {}).latest || {}).runId || ""].join("|");
     if (sig === this._chromeSig) return;
     const now = performance.now();
@@ -949,8 +527,12 @@ const app = {
     const b = $("#run-banner");
     if (this.runStatus === "running") {
       b.hidden = false;
-      $("#rb-jump").href = this.runMode === "hard" ? "#/genome" : "#/scan/" + this.runMode;
-      $("#rb-text").textContent = `${t("mode." + this.runMode)} · ${this.phase ? t("phase." + this.phase) : ""} · ${mmss(this.counters.elapsedMs)} · ${fmt(this.counters.probesSpent || this.counters.completed || 0)}`;
+      $(".rb-label", b).textContent = t(this.stopping ? "run.stopping" : "run.running");
+      const jump = $("#rb-jump");
+      const here = (this.runMode === "hard" && this.viewName === "genome") || (this.runMode !== "hard" && this.viewName === "scan" && this.viewParts[1] === this.runMode);
+      if (here) { jump.removeAttribute("href"); jump.textContent = t("run.here"); jump.classList.add("dim"); }
+      else { jump.setAttribute("href", this.runMode === "hard" ? "#/genome" : "#/scan/" + this.runMode); jump.textContent = t("run.openConsole"); jump.classList.remove("dim"); }
+      $("#rb-text").textContent = `${t("mode." + this.runMode)} · ${this.phase ? t("phase." + this.phase) : ""} · ${mmss(this.elapsedMs())} · ${fmt(this.counters.probesSpent || this.counters.completed || 0)}`;
     } else b.hidden = true;
     $("#foot-status").textContent = this.state && this.state.latest ? `${this.state.latest.runId} · ${this.state.latest.finishedAt || ""}` : "";
     this.refreshNotes();
@@ -969,10 +551,32 @@ function armButton(btn, armKey, fn) {
 }
 function drawHelix() {
   const svg = $("#helix"); if (!svg) return;
-  let p1 = "", p2 = "", rungs = "";
-  for (let x = 0; x <= 72; x += 2) { const y1 = 9 + 6 * Math.sin(x / 72 * Math.PI * 2), y2 = 9 - 6 * Math.sin(x / 72 * Math.PI * 2); p1 += `${x},${y1.toFixed(1)} `; p2 += `${x},${y2.toFixed(1)} `; }
-  for (let x = 6; x < 72; x += 12) { const y1 = 9 + 6 * Math.sin(x / 72 * Math.PI * 2), y2 = 9 - 6 * Math.sin(x / 72 * Math.PI * 2); rungs += `<line x1="${x}" y1="${y1.toFixed(1)}" x2="${x}" y2="${y2.toFixed(1)}"/>`; }
-  svg.innerHTML = `<g style="stroke:var(--ink-40)" stroke-width="1">${rungs}</g><polyline points="${p1}" fill="none" style="stroke:var(--a)" stroke-width="1.4"/><polyline points="${p2}" fill="none" style="stroke:var(--c)" stroke-width="1.4"/>`;
+  // The mark is DRAWN, never transformed: the two strands are sine
+  // curves whose shared phase advances slowly, so the eye reads a
+  // rotating double helix. (The previous CSS scaleY "breath" scaled
+  // the whole element — strokes shimmered, the mark bled outside
+  // its box, and the motion read as a rubber band, not DNA.) Points
+  // are recomputed per frame: stroke widths never distort and the
+  // drawing stays inside its 72×18 box. Rungs fade with strand
+  // separation as the depth cue. Calm / reduced-motion keeps the
+  // static frame — the same gate every other motion obeys.
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); svg.appendChild(el); return el; };
+  const XS = []; for (let x = 0; x <= 72; x += 3) XS.push(x);
+  const RUNG_XS = [6, 18, 30, 42, 54, 66];
+  const rungs = RUNG_XS.map((x) => mk("line", { x1: x, x2: x, style: "stroke:var(--ink-40)", "stroke-width": 1 }));
+  const s1 = mk("polyline", { fill: "none", style: "stroke:var(--a)", "stroke-width": 1.4 });
+  const s2 = mk("polyline", { fill: "none", style: "stroke:var(--c)", "stroke-width": 1.4 });
+  const frame = (phase) => {
+    const y = (x, sgn) => 9 + sgn * 6 * Math.sin((x / 72) * Math.PI * 2 + phase);
+    s1.setAttribute("points", XS.map((x) => `${x},${y(x, 1).toFixed(1)}`).join(" "));
+    s2.setAttribute("points", XS.map((x) => `${x},${y(x, -1).toFixed(1)}`).join(" "));
+    rungs.forEach((r, i) => { const x = RUNG_XS[i]; r.setAttribute("y1", y(x, 1).toFixed(1)); r.setAttribute("y2", y(x, -1).toFixed(1)); r.style.opacity = (0.2 + 0.7 * Math.abs(Math.sin((x / 72) * Math.PI * 2 + phase))).toFixed(2); });
+  };
+  frame(0);
+  if (prefs.calm) return;
+  const loop = makeLoop(() => { if (!prefs.calm) frame((performance.now() / 14000) * Math.PI * 2); }); // one slow turn ≈ 14 s; calm holds the still frame
+  loop.start(svg);
 }
 
 /* ---------------- router ---------------- */
@@ -984,6 +588,7 @@ function parseHash() {
 }
 const Views = {}; // filled below: dashboard, genome, scan, results, reports, settings, config, diagnostics
 function route() {
+  if (app.offline) { renderOffline(); return; }
   const { parts, q } = parseHash();
   const name = parts[0] || "dashboard";
   if (app.view && app.view.destroy) app.view.destroy();
@@ -992,8 +597,10 @@ function route() {
   const el = $("#view"); el.innerHTML = "";
   const fn = name === "scan" ? Views.scan : Views[name] || Views.dashboard;
   app.viewName = name;
+  app.viewParts = parts;
   app.view = fn(el, parts, q) || {};
   el.focus({ preventScroll: true });
+  app.refreshChrome(true);
 }
 
 /* ---------------- canvas palettes (hex twins of the OKLCH tokens) ---------------- */
@@ -1180,20 +787,119 @@ async function startRun(mode, resume) {
   const r = await app.src.action("run", resume ? { mode: "hard", resume: true } : { mode });
   if (r && r.error) {
     if (r.error === "config_missing") { app.showNotice(t("note.configMissing")); location.hash = "#/config"; }
+    else if (r.error === "run_active") app.showNotice(t("note.runActive", { run: r.runId || "—" }));
+    else if (r.error === "no_resume") app.showNotice(t("note.noResume"));
+    else if (r.error === "settings_invalid") app.showNotice(t("note.settingsInvalid"));
     else app.showNotice(r.message || r.error);
     return;
   }
   location.hash = mode === "hard" ? "#/genome" : "#/scan/" + mode;
 }
-function resultsTable(rows, compact) {
-  const head = `<tr><th class="num">${t("col.rank")}</th><th>${t("col.ip")}</th><th>${t("col.verdict")}</th><th class="num">${t("col.cons")}</th>${compact ? "" : `<th class="num">${t("col.raw")}</th><th class="num">${t("col.overall")}</th>`}<th>${t("col.elig")}</th><th class="num">${t("col.mbps")}</th><th class="num">${t("col.rpm")}</th><th>${t("col.pop")}</th><th>${t("col.gate")}</th>${compact ? "" : `<th>${t("col.why")}</th>`}</tr>`;
-  const body = rows.map((r, i) => `<tr class="${i === 0 ? "best" : ""} clickable" data-i="${i}">
-    <td class="num">${i + 1}</td><td>${i === 0 ? '<span class="tick-a">▸</span> ' : ""}${D(r.ip)}</td><td>${esc(r.verdict?.label || r.measurement?.status || "")}</td>
-    <td class="num">${r.scores?.conservative ?? "–"}</td>${compact ? "" : `<td class="num">${r.scores?.conservativeUncapped ?? "–"}</td><td class="num">${r.scores?.overall ?? "–"}</td>`}
-    <td>${D((r.eligibility?.successes ?? "–") + "/" + (r.eligibility?.attempts ?? "–"))} <span class="dim">↓${fmt2(r.eligibility?.confidence95?.lower)}</span></td>
-    <td class="num">${r.load?.sustainedMbps ?? "–"}</td><td class="num">${r.load?.rpm ?? "–"}</td><td>${esc(r.eligibility?.pops?.dominant || "–")}</td>
-    <td>${esc(r.gates?.status || "–")}</td>${compact ? "" : `<td>${esc(r.gates?.limiting || r.measurement?.status || "")}</td>`}</tr>`).join("");
-  return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+// The one stop path for every run view. Confirming a stop must be
+// visible the moment it happens — the button, the banner and the
+// narration all switch to "stopping" before the request is even
+// sent, and stay there until the run's terminal state arrives. A
+// refused stop (the run already ended) is explained, never swallowed.
+async function stopRun() {
+  if (app.stopping || app.runStatus !== "running") return;
+  app.stopping = true; app.refreshChrome(true);
+  if (app.view && app.view.onEvent) app.view.onEvent("stopping");
+  const r = await app.src.action("stop");
+  if (r && r.error) {
+    app.stopping = false;
+    app.showNotice(r.error === "no_active_run" ? t("note.noRun") : (r.message || r.error));
+    app.refreshChrome(true);
+    if (app.view && app.view.onEvent) app.view.onEvent("stopping");
+    app.resync();
+  }
+}
+// Journal lines are humanized from the run's real event stream —
+// phase changes, the server's own ticker notes, and the log events
+// whose names the journal knows how to say in plain words. Anything
+// else stays out (the raw tail lives in Diagnostics, unedited).
+const EV_KEYS = { "scan.start": "ev.scan.start", "scan.calibration": "ev.scan.calibration", "scan.calibration.no_control": "ev.scan.calibration.no_control", "hard.calibration": "ev.hard.calibration", "hard.calibration.no_control": "ev.hard.calibration.no_control", "scan.delayed_retry.start": "ev.scan.delayed_retry.start", "verification.start": "ev.verification.start", "verification.complete": "ev.verification.complete", "web.control.scan-stop": "ev.web.control.scan-stop", "tunnel.backfill": "ev.tunnel.backfill" };
+function journalText(type, d) {
+  if (type === "phase") return t("ev.phase", { phase: t("phase." + d.phase) });
+  if (type === "ticker") { const word = { accept: "ev.accept", reject: "ev.reject", inconclusive: "ev.inconclusive" }[d.text]; return word ? t(word) : d.text; }
+  if (type === "log") { const k = EV_KEYS[d.event]; if (!k) return null; if (d.event.endsWith("no_control")) return d.n != null ? t(k, { n: fmt(d.n) }) : t(k + ".plain"); return t(k); }
+  return null;
+}
+/* Plain words for the report's coded values: the results surface
+   speaks the reader's language, in both languages. The raw codes
+   stay in the JSON download, one click away — never on the table. */
+const word = (prefix, value) => (value && STR[lang] && STR[lang][prefix + value] ? t(prefix + value) : null);
+const verdictWord = (r) => word("verdict.", r.verdict?.label) || r.verdict?.label || word("ms.", r.measurement?.status) || r.measurement?.status || "–";
+const gateWord = (s) => word("gate.", s) || s || "–";
+const statusWord = (s) => word("ms.", s) || s || "–";
+const confWord = (c) => word("conf.", c) || c || "–";
+const limitingWord = (r) => word("limit.", r.gates?.limiting) || r.limitingFactor || r.gates?.limiting || statusWord(r.measurement?.status);
+/* The four weighted components, typeset as one strip: a micro-label
+   per stage (Web · Streaming · Load · Reliability) over the report's
+   own one-decimal scores. Missing stages show the honest dash. */
+function partsCell(r) {
+  const s = r.scores || {};
+  const cells = [["W", "comp.web", s.browsing], ["S", "comp.streaming", s.streaming], ["L", "comp.load", s.load], ["R", "comp.reliability", s.reliability]];
+  return `<span class="parts" dir="ltr">${cells.map(([k, key, v]) => `<span class="part" title="${esc(t(key))}"><i>${k}</i>${f1(v)}</span>`).join("")}</span>`;
+}
+const lower95Of = (r) => (r.scores?.reliabilityLower95 == null ? "–" : f1(r.scores.reliabilityLower95) + "%");
+/* The results table. Row order IS the report's order — the report
+   builder ranks (complete above partial, then its score order) and
+   this view never re-sorts; rank numbers are the rows' positions in
+   the full ranking, passed in as `ranks` when a filtered subset is
+   shown, so a subset can never crown its own first row as #1. */
+function resultsTable(rows, compact, ranks) {
+  const rk = ranks || rows.map((_, i) => i + 1);
+  const head = `<tr><th class="num c-rank">${t("col.rank")}</th><th class="c-ip">${t("col.ip")}</th><th class="c-verdict">${t("col.verdict")}</th><th class="num c-cons">${t("col.cons")}</th><th class="c-parts">${t("col.parts")}</th>${compact ? "" : `<th class="num c-raw">${t("col.raw")}</th><th class="num c-over">${t("col.overall")}</th>`}<th class="c-elig">${t("col.elig")}</th><th class="num c-mbps">${t("col.mbps")}</th><th class="num c-rpm">${t("col.rpm")}</th><th class="c-pop">${t("col.pop")}</th><th class="c-gate">${t("col.gate")}</th>${compact ? "" : `<th class="c-why">${t("col.why")}</th>`}</tr>`;
+  const body = rows.map((r, i) => {
+    const rank = rk[i], best = rank === 1;
+    return `<tr class="${best ? "best " : ""}clickable" data-i="${i}">
+    <td class="num c-rank">${best ? `<span class="rank-stamp">1</span>` : rank}</td><td class="c-ip">${best ? '<span class="tick-a">▸</span> ' : ""}${D(r.ip)}</td><td class="c-verdict">${esc(verdictWord(r))}</td>
+    <td class="num score c-cons">${f1(r.scores?.conservative)}</td><td class="c-parts">${partsCell(r)}</td>${compact ? "" : `<td class="num dim c-raw">${f1(r.scores?.conservativeUncapped)}</td><td class="num c-over">${f1(r.scores?.overall)}</td>`}
+    <td class="c-elig" data-l="${esc(t("col.elig"))}">${D((r.eligibility?.successes ?? "–") + "/" + (r.eligibility?.attempts ?? "–"))} <span class="dim">↓${lower95Of(r)}</span></td>
+    <td class="num c-mbps" data-l="${esc(t("col.mbps"))}">${f2(r.load?.sustainedMbps)}</td><td class="num c-rpm" data-l="${esc(t("col.rpm"))}">${f1(r.load?.rpm)}</td><td class="c-pop" data-l="${esc(t("col.pop"))}">${esc(r.eligibility?.pops?.dominant || "–")}</td>
+    <td class="c-gate" data-l="${esc(t("col.gate"))}">${esc(gateWord(r.gates?.status))}</td>${compact ? "" : `<td class="c-why">${esc(limitingWord(r))}</td>`}</tr>`;
+  }).join("");
+  return `<table class="data res ${compact ? "res-c" : "res-f"}"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+/* The row expansion: a structured ledger, not a text dump. Every
+   value is the report's, under the same display rules as the table;
+   a stage the engine did not measure says so, in the reader's
+   language, instead of printing undefined-shaped noise. */
+function resultDetail(r) {
+  const s = r.scores || {}, e = r.eligibility || {}, g = r.gates || {}, m = r.measurement || {};
+  const withUnit = (txt, unit) => (txt === "–" ? "–" : txt + " " + unit);
+  const ms = (n) => withUnit(fTrim(n), t("unit.ms"));
+  const field = (label, value) => `<div class="dfield"><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
+  const sec = (title, inner) => `<section class="dsec"><h4>${esc(title)}</h4><div class="dgrid">${inner}</div></section>`;
+  const notMeasured = `<p class="dnote">${esc(t("res.notMeasured"))}</p>`;
+  const elig = sec(t("det.eligibility"),
+    field(t("det.success"), D((e.successes ?? "–") + "/" + (e.attempts ?? "–"))) +
+    field(t("det.rate"), D(pct1(e.successRate))) +
+    field(t("det.lower95"), D(lower95Of(r))) +
+    field(t("det.median"), D(ms(e.handshakeMedianMs))) +
+    field(t("det.confidence"), esc(confWord(e.confidence))));
+  const scores = sec(t("det.scores"),
+    field(t("comp.web"), f1(s.browsing)) + field(t("comp.streaming"), f1(s.streaming)) +
+    field(t("comp.load"), f1(s.load)) + field(t("comp.reliability"), f1(s.reliability)) +
+    field(t("det.overall"), f1(s.overall)) + field(t("det.rawOverall"), f1(s.overallUncapped)) +
+    field(t("det.cons"), f1(s.conservative)) + field(t("det.rawCons"), f1(s.conservativeUncapped)));
+  const loadSec = `<section class="dsec"><h4>${esc(t("det.load"))}</h4>${r.load ? `<div class="dgrid">` +
+    field(t("det.sustained"), D(withUnit(f2(r.load.sustainedMbps), t("unit.mbps")))) +
+    field(t("det.rpm"), f1(r.load.rpm)) +
+    field(t("det.shaping"), fTrim(r.load.shapingRatio)) +
+    field(t("det.addedRtt"), D(ms(r.load.rttIncreaseMs))) + `</div>` : notMeasured}</section>`;
+  const streamSec = `<section class="dsec"><h4>${esc(t("det.streaming"))}</h4>${r.streaming ? `<div class="dgrid">` +
+    field(t("det.sustainable"), D(withUnit(fTrim(r.streaming.sustainableMbps), t("unit.mbps")))) +
+    field(t("det.quality"), esc(r.streaming.quality || "–")) + `</div>` : notMeasured}</section>`;
+  const gates = `<section class="dsec"><h4>${esc(t("det.gates"))}</h4><div class="dgrid">` +
+    field(t("det.status"), esc(gateWord(g.status))) +
+    field(t("det.limiting"), esc(limitingWord(r))) + `</div>` +
+    (r.verdict?.summary ? `<p class="dnote">${esc(t("det.verdict"))}: ${esc(r.verdict.summary)}</p>` : "") + `</section>`;
+  const meas = sec(t("det.measurement"),
+    field(t("det.mstatus"), esc(statusWord(m.status))) +
+    field(t("det.bytes"), fmtBytes(m.bytesMeasured)) +
+    field(t("det.qoe"), esc(m.qoeConfidence || "–")));
+  return `<div class="detail">${elig}${scores}${loadSec}${streamSec}${gates}${meas}</div>`;
 }
 
 Views.dashboard = (el) => {
@@ -1238,16 +944,18 @@ const HARD_PHASES = ["hard-primer", "hard-coverage", "hard-expansion", "hard-ret
 Views.genome = (el) => {
   el.innerHTML = `
     <h2 class="view-title">${esc(t("genome.title"))}</h2>
-    <p class="view-sub">${esc(t("genome.sub", { ranges: fmt(753), blocks: fmt(7697), addrs: fmt(1970432) }))}</p>
+    <p class="view-sub" id="g-sub"></p>
     <div class="form-actions" style="margin:0 0 14px">
       <button class="btn btn-primary" id="g-begin">${esc(t("ui.beginReplication"))}</button>
       <button class="btn" id="g-resume" hidden>${esc(t("ui.resume"))}</button>
       <button class="btn danger" id="g-stop" hidden>${esc(t("ui.stopRun"))}</button>
       <span class="readout" id="g-phase"></span>
     </div>
+    <p class="plain-note">${esc(t("genome.intro"))}</p>
+    <p class="plain-note" id="g-resume-line" hidden></p>
     <div class="console-grid">
       <div class="console-side">
-        <div class="rail" id="g-rail">${HARD_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note"></span></div>`).join("")}</div>
+        <div class="rail" id="g-rail">${HARD_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note">${esc(t("phn." + p))}</span></div>`).join("")}</div>
         <h3 class="sec-head">${esc(t("genome.budget"))}</h3>
         <div class="budget-meter"><div id="g-budget-fill"></div></div>
         <div class="readout" id="g-budget-text"></div>
@@ -1256,14 +964,17 @@ Views.genome = (el) => {
         </div>
         <h3 class="sec-head">${esc(t("genome.liveNotes"))}</h3>
         <div class="ticker" id="g-ticker"></div>
+        <h3 class="sec-head">${esc(t("console.journal"))}</h3>
+        <div class="ticker journal" id="g-journal"></div>
       </div>
       <div class="console-main">
         <div class="readout dim" id="g-counters"></div>
-        <h3 class="sec-head">${esc(t("genome.ideo", { ranges: fmt(753) }))}<span class="right mono" id="g-ideo-cap"></span></h3>
+        <h3 class="sec-head"><span id="g-ideo-head"></span><span class="right mono" id="g-ideo-cap"></span></h3>
         <div class="ideo-wrap"><canvas class="ideo" id="g-ideo" height="26"></canvas></div>
         <div class="plate-frame"><div id="g-plate"></div></div>
         <p class="plain-note">${esc(t("genome.tapHint"))} <span class="mono" id="g-hover"></span></p>
         <div id="g-lane"></div>
+        <p id="g-done"></p>
         <h3 class="sec-head">${esc(t("genome.trace"))}</h3>
         <canvas class="trace" id="g-trace"></canvas>
         <h3 class="sec-head">${esc(t("genome.liveTop"))}</h3>
@@ -1286,7 +997,7 @@ Views.genome = (el) => {
     cx.fillStyle = P.plate2; cx.fillRect(0, 4, W, 12);
     let x = 0; cx.fillStyle = P.ink40; cx.font = "9px " + getComputedStyle(document.body).getPropertyValue("--mono");
     app.catalog.ranges.forEach((r, ri) => {
-      const w = (r.blocks / 7697) * W;
+      const w = (r.blocks / (app.catalog.blocksTotal || 7697)) * W;
       cx.fillRect(x + w - 0.5, 4, 1, 12);
       if (app.genome) { let split = false; const start = app.catalog.ranges.slice(0, ri).reduce((a, y) => a + y.blocks, 0); for (let k = 0; k < r.blocks && !split; k++) if (app.genome.state[start + k] === 7) split = true; if (split) cx.fillRect(x, 18, Math.max(2, w), 2); }
       if (w > 52) cx.fillText(r.cidr, x + 2, 13);
@@ -1297,7 +1008,7 @@ Views.genome = (el) => {
   ideo.addEventListener("click", (e) => {
     if (!app.catalog) return;
     const r = ideo.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width;
-    let acc = 0, idx = 0; for (let ri = 0; ri < app.catalog.ranges.length; ri++) { acc += app.catalog.ranges[ri].blocks / 7697; if (fx <= acc) { idx = ri; break; } }
+    let acc = 0, idx = 0; for (let ri = 0; ri < app.catalog.ranges.length; ri++) { acc += app.catalog.ranges[ri].blocks / (app.catalog.blocksTotal || 7697); if (fx <= acc) { idx = ri; break; } }
     plate.inspect = plate.inspect === idx ? null : idx; plate.resize(); drawIdeo();
   });
   const railTo = (phase) => {
@@ -1305,47 +1016,86 @@ Views.genome = (el) => {
     $$("#g-rail .station").forEach((s, k) => { s.className = "station" + (idx >= 0 && k < idx ? " done" : idx >= 0 && k === idx ? " now" : ""); });
     $("#g-phase").textContent = phase ? t("phase." + phase) : "";
   };
+  // Every count on this page is derived from what the server serves:
+  // the catalog totals from the catalog payload, the probe budget
+  // from the served settings (the budget cap is the server's
+  // platform call, never a literal copied into the client).
+  let budgetTotal = null;
+  const subTo = () => {
+    const c = app.catalog;
+    $("#g-sub").textContent = t("genome.sub", { ranges: fmt(c?.rangesTotal), blocks: fmt(c?.blocksTotal), addrs: fmt(c?.addressesTotal) });
+    $("#g-ideo-head").textContent = t("genome.ideo", { ranges: fmt(c?.rangesTotal) });
+  };
   const countersTo = () => {
     const c = app.counters;
-    $("#g-counters").textContent = t("genome.counters", { elapsed: mmss(c.elapsedMs), alive: fmt(c.eligible || 0), primed: fmt(c.blocksPrimed || 0), expanded: fmt(c.blocksExpanded || 0), split: fmt(c.blocksSplit || 0) });
-    const total = 72000, spent = c.probesSpent || 0;
-    $("#g-budget-fill").style.width = Math.min(100, (spent / total) * 100) + "%";
-    $("#g-budget-text").textContent = t("genome.spent", { spent: fmt(spent), total: fmt(total) });
+    $("#g-counters").textContent = t("genome.counters", { elapsed: mmss(app.elapsedMs()), alive: fmt(c.eligible || 0), primed: fmt(c.blocksPrimed || 0), expanded: fmt(c.blocksExpanded || 0), split: fmt(c.blocksSplit || 0) });
+    const spent = c.probesSpent || 0;
+    $("#g-budget-fill").style.width = budgetTotal ? Math.min(100, (spent / budgetTotal) * 100) + "%" : "0%";
+    $("#g-budget-text").textContent = budgetTotal ? t("genome.spent", { spent: fmt(spent), total: fmt(budgetTotal) }) : t("genome.spentOnly", { spent: fmt(spent) });
     $("#g-ticker").innerHTML = app.ticker.slice(0, 8).map((x) => `<div>${esc(x)}</div>`).join("");
+    subTo();
+  };
+  const journalEl = $("#g-journal"), journalLines = [];
+  const pushJournal = (text) => {
+    if (!text || journalLines[journalLines.length - 1] === text) return;
+    journalLines.push(text); if (journalLines.length > 40) journalLines.shift();
+    journalEl.innerHTML = journalLines.map((x) => `<div>${esc(x)}</div>`).join("");
+    journalEl.scrollTop = journalEl.scrollHeight;
   };
   const controlsTo = () => {
     const running = app.runStatus === "running" && app.runMode === "hard";
+    const done = $("#g-done");
+    if (app.runMode === "hard" && app.runStatus === "complete") done.innerHTML = `${esc(t("console.finished"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
+    else if (app.runMode === "hard" && app.runStatus === "paused-done") done.innerHTML = `${esc(t("console.stopped"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
+    else if (app.runMode === "hard" && app.runStatus === "failed") done.innerHTML = `${esc(t("console.failed", { reason: app.runError || t("err.unknown") }))} <a href="#/diagnostics">${esc(t("nav.diagnostics"))}</a>`;
+    else done.innerHTML = "";
     $("#g-begin").hidden = running || app.runStatus === "paused-done";
-    $("#g-resume").hidden = !(app.runStatus === "paused-done" && ((app.state || {}).status || {}).resumeAvailable);
-    $("#g-stop").hidden = !running;
+    const canResume = app.runStatus === "paused-done" && ((app.state || {}).status || {}).resumeAvailable;
+    $("#g-resume").hidden = !canResume;
+    const rl = $("#g-resume-line");
+    rl.hidden = !canResume;
+    if (canResume) rl.textContent = t("dash.resumeLine", { phase: t("phase." + (app.phase || "hard-primer")), probes: fmt(app.counters.probesSpent || 0) });
+    const stop = $("#g-stop");
+    stop.hidden = !running;
+    if (app.stopping) { stop.disabled = true; stop.textContent = t("ui.stopping"); }
+    else { stop.disabled = false; if (!stop.dataset.armed) stop.textContent = t("ui.stopRun"); }
     railTo(app.phase); countersTo();
   };
   const topTo = (rows) => {
-    $("#g-top").innerHTML = rows && rows.length ? `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th class="num">↓95</th><th>${t("col.pop")}</th><th>${t("col.ip")} /24</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td class="num">${fmt2(r.eligibility.confidence95.lower)}</td><td>${esc(r.eligibility.pops.dominant)}</td><td>${D(r.block || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="empty">${esc(t("console.noCandidates"))}</p>`;
+    $("#g-top").innerHTML = rows && rows.length ? `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th class="num">↓95</th><th>${t("col.pop")}</th><th>${t("col.ip")} /24</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td class="num">${pct1(r.eligibility.confidence95.lower)}</td><td>${esc(r.eligibility.pops.dominant || "–")}</td><td>${D(r.block || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="empty">${esc(t("console.noCandidates"))}</p>`;
   };
   const laneTo = () => {
-    $("#g-lane").innerHTML = app.lane.length ? `<div class="lane"><h3 class="sec-head">${esc(t("lane.title"))}</h3>${app.lane.map((r) => `<div class="lane-row"><span>${D(r.ip)}</span><span class="ev">transfer <b>${r.scores?.overall ?? "–"}</b></span><span class="ev">streaming <b>${r.streaming?.sustainableMbps ?? "–"} Mbps</b></span><span class="ev">load <b>${r.load?.sustainedMbps ?? "–"} Mbps · ${r.load?.rpm ?? "–"} rpm</b></span><span class="ev">${esc(r.verdict?.label || "")}</span></div>`).join("")}</div>` : "";
+    $("#g-lane").innerHTML = app.lane.length ? `<div class="lane"><h3 class="sec-head">${esc(t("lane.title"))}</h3>${app.lane.map((r) => `<div class="lane-row"><span>${D(r.ip)}</span><span class="ev">${esc(t("det.overall"))} <b>${f1(r.scores?.overall)}</b></span><span class="ev">${esc(t("comp.streaming"))} <b>${fTrim(r.streaming?.sustainableMbps)} Mbps</b></span><span class="ev">${esc(t("comp.load"))} <b>${f2(r.load?.sustainedMbps)} Mbps · ${f1(r.load?.rpm)} rpm</b></span><span class="ev">${esc(verdictWord(r))}</span></div>`).join("")}</div>` : "";
   };
   $("#g-begin").addEventListener("click", () => startRun("hard"));
   $("#g-resume").addEventListener("click", () => startRun("hard", true));
-  $("#g-stop").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopRunArm", async () => { await app.src.action("stop"); }));
+  $("#g-stop").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopRunArm", stopRun));
   let lastCounters = 0;
+  app.src.getSettings().then(({ settings }) => { const b = settings?.hard?.budgetProbes; if (Number.isFinite(b)) { budgetTotal = b; countersTo(); } }).catch(() => {});
+  app.src.setTail(true); // the journal is fed by the run's log stream
+  const clock = setInterval(() => { if (app.runStatus === "running") countersTo(); }, 1000);
   drawIdeo(); controlsTo(); topTo(((app.state || {}).run || {}).top); laneTo();
   if (app.genome) { plate.drawStatic(); plate.allDirty(); }
   return {
-    destroy() { plate.destroy(); loop.stop(); closeInspector(); },
+    destroy() { plate.destroy(); loop.stop(); clearInterval(clock); app.src.setTail(false); closeInspector(); },
     onSnapshot(s) { plate.drawStatic(); plate.allDirty(); drawIdeo(); controlsTo(); topTo((s.run || {}).top); },
     onEvent(type, d) {
-      if (type === "phase") { railTo(d.phase); }
+      if (type === "phase") { railTo(d.phase); pushJournal(journalText("phase", d)); }
+      if (type === "ticker") pushJournal(journalText("ticker", d));
+      if (type === "log") pushJournal(journalText("log", d));
       if (type === "counters" || type === "ticker") { const now = performance.now(); if (now - lastCounters > 500) { lastCounters = now; countersTo(); } }
       if (type === "candidate" && d.lane) laneTo();
       if (type === "run-state") { controlsTo(); if (d.status === "complete") drawIdeo(); }
+      if (type === "stopping") controlsTo();
     },
   };
 };
-function plateBlockCidr(i) { // catalog-order block label without the sim's help (live path)
+function plateBlockCidr(i) { // catalog-order block label from the live catalog
   if (!app.catalog) return "";
-  let acc = 0; for (const r of app.catalog.ranges) { if (i < acc + r.blocks) { const base = ipToInt(r.firstBlock.split("/")[0]); return intToIp(base + (i - acc) * 256) + "/24"; } acc += r.blocks; }
+  // CONTRACT catalog shape: `cidr` carries the range's CIDR string;
+  // `firstBlock` is the block INDEX (a number), not an address —
+  // reading it as a string threw on every plate hover under Live.
+  let acc = 0; for (const r of app.catalog.ranges) { if (i < acc + r.blocks) { const base = ipToInt(r.cidr.split("/")[0]); return intToIp(base + (i - acc) * 256) + "/24"; } acc += r.blocks; }
   return "";
 }
 async function openInspector(i, e) {
@@ -1362,11 +1112,11 @@ async function openInspector(i, e) {
     <h4>${D(d.cidr)}</h4>
     <div class="dim">${esc(t("insp.range", { range: d.range, lane: d.lane }))}</div>
     <div class="rule"></div>
-    <dl><dt>${esc(t("insp.thisRun"))}</dt><dd>${d.run ? esc(t("insp.probes", { ok: d.run.successes, n: d.run.attempts, rate: fmt2(d.run.rate), lower: fmt2(d.run.lower) })) : "–"}</dd>
+    <dl><dt>${esc(t("insp.thisRun"))}</dt><dd>${d.run ? esc(t("insp.probes", { ok: d.run.successes, n: d.run.attempts, rate: pct1(d.run.rate), lower: pct1(d.run.lower) })) : "–"}</dd>
     <dt>${esc(t("insp.primer"))}</dt><dd>${D(d.primer.attempts)} · ${esc(t("insp.tier", { tier: d.primer.tier }))}</dd>
     <dt>${esc(t("insp.halves"))}</dt><dd>${D(d.halves.lower.s + "/" + d.halves.lower.n)} · ${D(d.halves.upper.s + "/" + d.halves.upper.n)}</dd>
     <dd></dd><dd>${esc(d.halves.split ? t("insp.splitYes") : t("insp.splitNo", { p: fmt2(d.halves.splitP) }))}</dd>
-    <dt>${esc(t("insp.reputation"))}</dt><dd>${rep ? esc(t("insp.repLine", { n: rep.attempts, runs: rep.runs, rate: fmt2(rep.rate), date: rep.lastSeen, ip: rep.best, colo: rep.colo })) : esc(t("insp.unknown"))}</dd>
+    <dt>${esc(t("insp.reputation"))}</dt><dd>${rep ? esc(t("insp.repLine", { n: rep.attempts, runs: rep.runs, rate: pct1(rep.rate), date: rep.lastSeen, ip: rep.best, colo: rep.colo })) : esc(t("insp.unknown"))}</dd>
     <dt>${esc(t("insp.candidates"))}</dt><dd>${d.candidates && d.candidates.length ? d.candidates.map((c) => D(c.ip)).join(" · ") : esc(t("insp.noCand"))}</dd></dl>
     <div class="rule"></div>
     <a href="#/results?block=${encodeURIComponent(d.cidr)}">${esc(t("insp.openResults"))}</a>`;
@@ -1378,7 +1128,7 @@ async function openInspector(i, e) {
 function closeInspector() { const b = $("#inspector"); if (b) b.hidden = true; }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeInspector(); });
 
-const SCAN_PHASES = ["screening", "delayed-retry", "verification", "tunnel"];
+const SCAN_PHASES = ["calibrating", "screening", "delayed-retry", "verification", "tunnel"];
 const PROFILES = { quick: { n: 16, rounds: 2, fin: 6, tun: "3 × 1" }, full: { n: 120, rounds: 3, fin: 20, tun: "5 × 1" }, research: { n: 240, rounds: 6, fin: 24, tun: "8 × 3" } };
 Views.scan = (el, parts) => {
   const mode = parts[1] || "full", P = PROFILES[mode] || PROFILES.full;
@@ -1389,38 +1139,86 @@ Views.scan = (el, parts) => {
     <div class="kv"><span>${esc(t("console.candidates"))} <b>${fmt(P.n)}</b></span> · <span>${esc(t("console.rounds"))} <b>${P.rounds}</b></span> · <span>${esc(t("console.finalists"))} <b>${P.fin}</b></span> · <span>${esc(t("console.tunnel"))} <b>${P.tun}</b></span> · <span>${esc(t("console.estTraffic"))} <b id="sc-est">…</b></span></div>
     <div class="form-actions"><button class="btn btn-primary" id="sc-start">${esc(t("ui.start"))}</button>
     <button class="btn danger" id="sc-stop" hidden>${esc(t("ui.stopRun"))}</button><span class="readout" id="sc-phase"></span></div>
+    <p class="plain-note" id="sc-hint" hidden>${esc(t("console.idleHint"))}</p>
     <div class="console-grid" style="margin-top:18px">
-      <div class="console-side"><div class="rail" id="sc-rail">${SCAN_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note"></span></div>`).join("")}</div>
-      <h3 class="sec-head">${esc(t("genome.liveNotes"))}</h3><div class="ticker" id="sc-ticker"></div></div>
+      <div class="console-side"><div class="rail" id="sc-rail">${SCAN_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note">${esc(t("phn." + p))}</span></div>`).join("")}</div></div>
       <div class="console-main">
         <div class="readout dim" id="sc-counters"></div>
-        <canvas class="trace" id="sc-trace"></canvas>
+        <p class="nowline"><span class="pulse" id="sc-pulse" hidden></span><span id="sc-now"></span></p>
+        <h3 class="sec-head">${esc(t("console.journal"))}</h3>
+        <div class="ticker journal" id="sc-journal"></div>
         <h3 class="sec-head">${esc(t("console.ledger"))}</h3>
         <div id="sc-ledger"><p class="empty">${esc(t("console.noCandidates"))}</p></div>
+        <p class="plain-note">${esc(t("console.ledgerNote"))}</p>
         <p id="sc-done"></p>
       </div>
     </div>`;
-  const trace = new Trace($("#sc-trace"));
-  const loop = makeLoop(() => trace.draw()); loop.start($("#sc-trace"));
   app.src.getSettings().then(({ settings }) => app.src.estimate(settings)).then((r) => { const n = $("#sc-est"); if (n && r) n.textContent = fmtBytes(r.perCandidateBytes * P.n); }).catch(() => {});
   const seg = (f) => `<span class="segbar">${[0.25, 0.5, 0.75, 1].map((x) => `<i class="${f >= x ? "full" : f > x - 0.25 ? "part" : ""}"></i>`).join("")}</span>`;
   const renderLedger = () => {
     const rows = [...app.ledger.values()].filter((r) => r.stage);
     if (!rows.length) return;
-    $("#sc-ledger").innerHTML = `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th>SPRT</th><th>${t("col.verdict")}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${seg(r.stage?.elig || 0)} ${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td>${seg(r.stage?.sprt || 0)} <span class="dim">${esc(r.sprt || "")}</span></td><td>${esc(r.verdict?.label || "")}</td></tr>`).join("")}</tbody></table>`;
+    $("#sc-ledger").innerHTML = `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th>SPRT</th><th>${t("col.verdict")}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${seg(r.stage?.elig || 0)} ${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td>${seg(r.stage?.sprt || 0)} <span class="dim">${esc(r.sprt || "")}</span></td><td>${esc(r.verdict ? verdictWord(r) : "")}</td></tr>`).join("")}</tbody></table>`;
   };
   const railTo = (phase) => { const idx = SCAN_PHASES.indexOf(phase); $$("#sc-rail .station").forEach((s, k) => { s.className = "station" + (idx >= 0 && k < idx ? " done" : idx >= 0 && k === idx ? " now" : ""); }); $("#sc-phase").textContent = phase && t("phase." + phase) ? t("phase." + phase) : ""; };
+  // The journal: the run narrated in plain words, newest last,
+  // auto-scrolled — fed only by the run's real events (phase,
+  // ticker, log), never by a timer inventing motion.
+  const journalEl = $("#sc-journal"), journalLines = [];
+  const pushJournal = (text) => {
+    if (!text || journalLines[journalLines.length - 1] === text) return;
+    journalLines.push(text); if (journalLines.length > 40) journalLines.shift();
+    journalEl.innerHTML = journalLines.map((x) => `<div>${esc(x)}</div>`).join("");
+    journalEl.scrollTop = journalEl.scrollHeight;
+  };
+  const withIp = (line, ip) => (ip ? line.replace("\u0001", D(ip)) : line);
+  // The current-operation line: what is happening right now, in one
+  // sentence a first-time user can follow.
+  const nowLine = () => {
+    if (app.runMode !== mode) return "";
+    if (app.stopping) return t("ui.stopping");
+    if (app.runStatus !== "running") return "";
+    const c = app.counters, ph = app.phase, done = fmt(c.completed || 0), total = fmt(c.total || 0);
+    if (ph === "calibrating") return (c.total || 0) > 1 ? t("op.calibratingLevel", { done, total }) : t("op.calibrating");
+    if (ph === "screening") return withIp(t(c.currentIp ? "op.screening" : "op.screeningNoIp", { round: c.round || 1, rounds: P.rounds, ip: "\u0001", done, total }), c.currentIp);
+    if (ph === "delayed-retry") return t("op.delayed-retry", { done, total });
+    if (ph === "verification") return t("op.verification", { done, total });
+    if (ph === "tunnel") return withIp(t(c.currentIp ? "op.tunnel" : "op.tunnelNoIp", { ip: "\u0001", done, total }), c.currentIp);
+    if (ph) return t("op.phase", { phase: t("phase." + ph), done, total });
+    return t("op.starting");
+  };
+  const renderNow = () => {
+    $("#sc-now").innerHTML = nowLine();
+    $("#sc-pulse").hidden = !(app.runStatus === "running" && app.runMode === mode);
+    $("#sc-counters").textContent = app.runMode === mode && app.runStatus === "running" ? `${fmt(app.counters.completed || 0)} / ${fmt(app.counters.total || 0)} · ${mmss(app.elapsedMs())} · ${fmt(app.counters.eligible || 0)} ${esc(t("col.elig"))}` : "";
+  };
   const controlsTo = () => {
     const running = app.runStatus === "running" && app.runMode === mode;
-    $("#sc-start").hidden = running; $("#sc-stop").hidden = !running;
-    $("#sc-counters").textContent = app.runMode === mode ? `${fmt(app.counters.completed || 0)} / ${fmt(app.counters.total || 0)} · ${mmss(app.counters.elapsedMs)}` : "";
-    $("#sc-ticker").innerHTML = app.ticker.slice(0, 8).map((x) => `<div>${esc(x)}</div>`).join("");
-    if (app.runStatus === "complete" && app.runMode === mode) $("#sc-done").innerHTML = `${esc(t("console.finished"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
+    $("#sc-start").hidden = running;
+    const stop = $("#sc-stop");
+    stop.hidden = !running;
+    if (app.stopping) { stop.disabled = true; stop.textContent = t("ui.stopping"); }
+    else { stop.disabled = false; if (!stop.dataset.armed) stop.textContent = t("ui.stopRun"); }
+    const ended = app.runMode === mode && (app.runStatus === "complete" || app.runStatus === "canceled" || app.runStatus === "failed");
+    $("#sc-hint").hidden = running || ended;
+    if (app.runMode === mode && app.runStatus === "complete") $("#sc-done").innerHTML = `${esc(t("console.finished"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
+    else if (app.runMode === mode && app.runStatus === "canceled") $("#sc-done").innerHTML = `${esc(t("console.stopped"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
+    else if (app.runMode === mode && app.runStatus === "failed") $("#sc-done").innerHTML = `${esc(t("console.failed", { reason: app.runError || t("err.unknown") }))} <a href="#/diagnostics">${esc(t("nav.diagnostics"))}</a>`;
   };
   $("#sc-start").addEventListener("click", () => startRun(mode));
-  $("#sc-stop").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopRunArm", async () => { await app.src.action("stop"); }));
-  railTo(app.phase); controlsTo(); renderLedger();
-  return { destroy() { loop.stop(); }, onSnapshot: controlsTo, onEvent(type) { if (type === "phase") railTo(app.phase); if (type === "candidate") renderLedger(); if (type === "run-state" || type === "counters" || type === "ticker") controlsTo(); } };
+  $("#sc-stop").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopRunArm", stopRun));
+  app.src.setTail(true);
+  const clock = setInterval(() => { if (app.runStatus === "running") renderNow(); }, 1000);
+  railTo(app.phase); controlsTo(); renderLedger(); renderNow();
+  if (app.runStatus === "running" && app.runMode === mode && app.phase) pushJournal(journalText("phase", { phase: app.phase }));
+  return { destroy() { clearInterval(clock); app.src.setTail(false); }, onSnapshot: controlsTo, onEvent(type, d) {
+    if (type === "phase") { railTo(app.phase); pushJournal(journalText("phase", d)); renderNow(); }
+    if (type === "ticker") pushJournal(journalText("ticker", d));
+    if (type === "log") pushJournal(journalText("log", d));
+    if (type === "candidate") renderLedger();
+    if (type === "counters") { controlsTo(); renderNow(); }
+    if (type === "run-state" || type === "stopping") { controlsTo(); renderNow(); }
+  } };
 };
 function fmtBytes(b) { if (b == null || !Number.isFinite(b)) return "–"; if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KiB"; return (b / 1048576).toFixed(1) + " MiB"; }
 
@@ -1433,39 +1231,31 @@ Views.results = (el, parts, q) => {
     const box = $("#res-body");
     if (!report || !report.results) { box.innerHTML = `<p class="empty">${esc(t("res.empty"))}</p>`; return; }
     const rows = block ? report.results.filter((r) => r.block === block) : report.results;
-    const dl = app.src.kind === "live"
-      ? `<a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/download">${esc(t("ui.downloadJson"))}</a> <a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/best-ips">${esc(t("ui.downloadBest"))}</a>`
-      : `<button class="btn btn-quiet" id="res-dl">${esc(t("ui.downloadJson"))}</button>`;
+    const ranks = rows.map((r) => report.results.indexOf(r) + 1);
+    const dl = `<a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/download">${esc(t("ui.downloadJson"))}</a> <a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/best-ips">${esc(t("ui.downloadBest"))}</a>`;
     box.innerHTML = `
       <p class="view-sub">${esc(t("res.fromRun", { run: report.runId, mode: t("mode." + (report.mode || "full")), when: report.finishedAt || "" }))}</p>
-      <div class="kv"><span>${t("console.candidates")} <b>${fmt(report.totals?.candidates)}</b></span> · <span>${t("col.elig")} <b>${fmt(report.totals?.eligible)}</b></span> · <span>complete <b>${fmt(report.totals?.complete)}</b></span> · <span>partial <b>${fmt(report.totals?.partial)}</b></span><span style="margin-inline-start:auto">${dl}</span></div>
+      <div class="kv"><span>${t("console.candidates")} <b>${fmt(report.totals?.candidates)}</b></span> · <span>${t("col.elig")} <b>${fmt(report.totals?.eligible)}</b></span> · <span>${t("ms.complete")} <b>${fmt(report.totals?.complete)}</b></span> · <span>${t("ms.partial")} <b>${fmt(report.totals?.partial)}</b></span><span style="margin-inline-start:auto">${dl}</span></div>
+      ${!block && rows.length ? `<p class="best-line"><span class="tick-a">▸</span> ${esc(t("res.top"))}: ${D(rows[0].ip)} · ${esc(verdictWord(rows[0]))} · ${esc(t("col.cons"))} ${D(f1(rows[0].scores?.conservative))}</p>` : ""}
+      <p class="plain-note">${esc(t("res.scope"))} ${esc(t("res.legend"))}</p>
       ${block ? `<p class="plain-note">${esc(t("res.filterBlock", { block }))} · <a href="#/results?run=${encodeURIComponent(report.runId)}">${esc(t("res.clearFilter"))}</a></p>` : ""}
-      <div style="margin-top:10px">${resultsTable(rows, false)}</div>`;
-    const dlb = $("#res-dl");
-    if (dlb) dlb.addEventListener("click", () => download(report.runId + ".json", JSON.stringify(report, null, 2), "application/json"));
+      <div style="margin-top:10px">${resultsTable(rows, false, ranks)}</div>`;
     $$("#res-body tr.clickable").forEach((tr) => tr.addEventListener("click", () => {
       if (tr.nextElementSibling && tr.nextElementSibling.classList.contains("detail-row")) { tr.nextElementSibling.remove(); return; }
       const r = rows[+tr.dataset.i]; if (!r) return;
-      const lines = [
-        `eligibility  ${r.eligibility?.successes}/${r.eligibility?.attempts} · rate ${r.eligibility?.successRate} · lower95 ${r.eligibility?.confidence95?.lower} · median ${r.eligibility?.handshakeMedianMs} ms · ${r.eligibility?.confidence} confidence`,
-        `scores       overall ${r.scores?.overall} (raw ${r.scores?.overallUncapped}) · conservative ${r.scores?.conservative} (raw ${r.scores?.conservativeUncapped})`,
-        `load         ${r.load ? r.load.sustainedMbps + " Mbps · " + r.load.rpm + " rpm · shaping " + r.load.shapingRatio + " · +RTT " + r.load.rttIncreaseMs + " ms" : "not measured"}`,
-        `streaming    ${r.streaming ? (r.streaming.sustainableMbps + " Mbps sustainable") : "not measured"}`,
-        `gates        ${r.gates?.status || "–"}${r.gates?.limiting ? " · limiting: " + r.gates.limiting : ""}`,
-        `measurement  ${r.measurement?.status} · ${fmtBytes(r.measurement?.bytesMeasured)} · ${r.measurement?.qoeConfidence || ""}`,
-      ].join("\n");
-      const d = document.createElement("tr"); d.className = "detail-row"; d.innerHTML = `<td colspan="12">${esc(lines)}</td>`;
+      const d = document.createElement("tr"); d.className = "detail-row"; d.innerHTML = `<td colspan="${tr.cells.length}">${resultDetail(r)}</td>`;
       tr.after(d);
     }));
   };
   app.src.getResults(runId).then((r) => { report = r; render(); }).catch(() => render());
-  return { onSnapshot() { if (!report) app.src.getResults(runId).then((r) => { report = r; render(); }).catch(() => {}); } };
+  return { onSnapshot(s) {
+    // Watching this page while a newer run lands must replace what
+    // is shown — "latest" means the server's latest, not the one
+    // that was latest when the page happened to open.
+    if (!report) { app.src.getResults(runId).then((r) => { report = r; render(); }).catch(() => {}); return; }
+    if (runId === "latest" && s && s.latest && report.runId !== s.latest.runId) app.src.getResults("latest").then((r) => { report = r; render(); }).catch(() => {});
+  } };
 };
-function download(name, text, type) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-}
 Views.reports = (el) => {
   el.innerHTML = `<h2 class="view-title">${esc(t("rep.title"))}</h2><p class="view-sub">${esc(t("rep.sub"))}</p><div id="rep-body"><p class="empty">…</p></div>`;
   const render = (list) => {
@@ -1634,9 +1424,10 @@ Views.config = (el) => {
 Views.diagnostics = (el) => {
   el.innerHTML = `<h2 class="view-title">${esc(t("dg.title"))}</h2>
     <h3 class="sec-head">${esc(t("dg.system"))}</h3><div id="dg-system"><p class="empty">…</p></div>
-    <h3 class="sec-head">${esc(t("dg.source"))}</h3>
-    <p class="plain-note">${esc(t("dg.sourceNote"))}</p>
-    <div class="form-actions" style="margin-top:0"><button class="btn" id="dg-live">${esc(t("ui.useLive"))}</button><button class="btn" id="dg-sim">${esc(t("ui.useSim"))}</button></div>
+    <h3 class="sec-head">${esc(t("dg.conn"))}</h3>
+    <p class="plain-note" id="dg-conn"></p>
+    <p class="plain-note">${esc(t("dg.calibTruth"))}</p>
+    <div class="form-actions" style="margin-top:0"><button class="btn" id="dg-retry" hidden>${esc(t("off.retry"))}</button></div>
     <h3 class="sec-head">${esc(t("dg.logs"))}</h3><div id="dg-logs"><p class="empty">…</p></div>
     <h3 class="sec-head">${esc(t("dg.tail"))}</h3>
     <div class="form-actions" style="margin:0 0 8px"><div class="chips" id="dg-chips">${["all", "info", "warn", "error"].map((l) => `<button class="chip" data-lv="${l}" aria-pressed="${l === "all"}">${l}</button>`).join("")}</div>
@@ -1647,15 +1438,17 @@ Views.diagnostics = (el) => {
   app.src.getSystem().then((s) => {
     $("#dg-system").innerHTML = `<table class="data" style="max-width:640px"><tbody>${(s.rows || []).map((r) => `<tr><td style="width:150px" class="dim">${esc(r.component)}</td><td>${D(r.value)}</td><td style="width:26px"><span style="display:inline-block;width:9px;height:9px;background:var(--${r.ok ? "a" : "t"})"></span></td></tr>`).join("")}</tbody></table>`;
   }).catch(() => {});
-  app.src.getLogs().then(async (logs) => {
-    if (!logs.length) { $("#dg-logs").innerHTML = `<p class="empty">${esc(t("dg.noLogs"))}</p>`; return; }
-    const sum = await app.src.getLogSummary(logs[0].name).catch(() => null);
-    $("#dg-logs").innerHTML = `<table class="data"><thead><tr><th>file</th><th class="num">${t("col.size")}</th><th>${t("dg.summary")}</th></tr></thead><tbody>${logs.map((l) => `<tr><td>${D(l.name)}</td><td class="num">${fmtBytes(l.size)}</td><td>${sum ? `${fmt(sum.total)} ${t("dg.events")} · ${fmt(sum.errors)} ${t("dg.errors")} · ${fmt(sum.warnings)} ${t("dg.warnings")}` : "–"}</td></tr>`).join("")}</tbody></table>`;
-  }).catch(() => {});
-  const srcBtns = () => { $("#dg-live").setAttribute("aria-pressed", String(app.src.kind === "live")); $("#dg-sim").setAttribute("aria-pressed", String(app.src.kind === "sim")); };
-  srcBtns();
-  $("#dg-live").addEventListener("click", async () => { if (await Live.probe()) { await window.__setSource("live"); srcBtns(); } else app.showNotice(t("conn.reconnecting")); });
-  $("#dg-sim").addEventListener("click", async () => { await window.__setSource("sim"); srcBtns(); });
+  const loadLogs = () => {
+    app.src.getLogs().then(async (logs) => {
+      if (!logs.length) { $("#dg-logs").innerHTML = `<p class="empty">${esc(t("dg.noLogs"))}</p>`; return; }
+      const sum = await app.src.getLogSummary(logs[0].name).catch(() => null);
+      $("#dg-logs").innerHTML = `<table class="data"><thead><tr><th>${t("col.file")}</th><th class="num">${t("col.size")}</th><th>${t("dg.summary")}</th></tr></thead><tbody>${logs.map((l) => `<tr><td>${D(l.name)}</td><td class="num">${fmtBytes(l.size)}</td><td>${sum ? `${fmt(sum.total)} ${t("dg.events")} · ${fmt(sum.errors)} ${t("dg.errors")} · ${fmt(sum.warnings)} ${t("dg.warnings")}` : "–"}</td></tr>`).join("")}</tbody></table>`;
+    }).catch(() => {});
+  };
+  loadLogs();
+  const connTo = () => { const off = app.offline || app.conn === "none"; $("#dg-conn").textContent = off ? t("dg.connOff") : t("dg.connLive"); $("#dg-retry").hidden = !off; };
+  connTo();
+  $("#dg-retry").addEventListener("click", async () => { await retryLive(); connTo(); });
   $$("#dg-chips .chip").forEach((c) => c.addEventListener("click", () => { filter = c.dataset.lv; $$("#dg-chips .chip").forEach((x) => x.setAttribute("aria-pressed", String(x === c))); redrawTail(); }));
   $("#dg-pause").addEventListener("click", (e) => { paused = !paused; e.currentTarget.textContent = t(paused ? "ui.unpause" : "ui.pause"); });
   const redrawTail = () => {
@@ -1667,22 +1460,61 @@ Views.diagnostics = (el) => {
   app.src.setTail(true);
   return {
     destroy() { app.src.setTail(false); },
-    onEvent(type, d) { if (type === "log") { lines.push(d); if (lines.length > 400) lines.splice(0, lines.length - 400); if (!paused) redrawTail(); } },
+    onSnapshot: connTo,
+    onEvent(type, d) {
+      if (type === "log") { lines.push(d); if (lines.length > 400) lines.splice(0, lines.length - 400); if (!paused) redrawTail(); }
+      if (type === "run-state" && d.status !== "running") loadLogs();
+    },
   };
 };
 
-/* ---------------- source selection & boot ---------------- */
-async function setSource(src, initial) {
-  if (app.src && app.src !== src) app.src.disconnect();
-  app.src = src; app.lastSeq = 0;
-  $("#sim-bar").hidden = src.kind !== "sim";
-  try { app.catalog = await src.getCatalog(); } catch { app.catalog = null; }
-  src.connect();
+/* ---------------- the one source, and boot ----------------
+   The shipped UI has exactly one data source: the real server.
+   There is no fallback feed and nothing simulated ever renders.
+   If the server does not answer — at boot, or after the event
+   stream dies mid-session — the page says so in plain words and
+   offers a retry; it never substitutes other data. */
+async function connectLive() {
+  app.src = Live; app.lastSeq = 0;
+  try { app.catalog = await Live.getCatalog(); } catch { app.catalog = null; }
+  Live.connect();
   await app.resync();
-  app.onConn(src.kind === "sim" ? "sim" : app.conn);
-  if (!initial) route();
 }
-window.__setSource = (kind) => setSource(kind === "sim" ? Sim : Live);
+function renderOffline() {
+  if (app.view && app.view.destroy) app.view.destroy();
+  app.view = null; app.viewName = "offline"; app.viewParts = [];
+  $("#view").innerHTML = `<h2 class="view-title">${esc(t("off.title"))}</h2><p class="view-sub">${esc(t("off.body"))}</p>
+  ${app._offStill ? `<p class="plain-note">${esc(t("off.still", { time: app._offStill }))}</p>` : ""}
+  <div class="form-actions"><button class="btn btn-primary" id="off-retry">${esc(t("off.retry"))}</button></div>`;
+  $("#off-retry").addEventListener("click", retryLive);
+}
+function enterOffline() {
+  if (app.offline) return;
+  Live.disconnect();
+  app.offline = true;
+  app.onConn("none");
+  renderOffline();
+}
+async function retryLive() {
+  if (await Live.probe().catch(() => false)) {
+    app.offline = false; app._offStill = null;
+    await connectLive();
+    route();
+  } else { app._offStill = new Date().toLocaleTimeString(); renderOffline(); }
+}
+// When the event stream drops, the pill says "reconnecting" — but
+// if the server itself is gone, say that instead of retrying
+// forever against a dead port. A deliberate server stop is exempt:
+// its plate stays, with its own explanation.
+let reachTimer = null;
+function scheduleReachCheck() {
+  if (reachTimer || app.offline || app.serverStopped) return;
+  reachTimer = setTimeout(async () => {
+    reachTimer = null;
+    if (app.offline || app.serverStopped || app.conn === "live") return;
+    if (!(await Live.probe().catch(() => false))) enterOffline();
+  }, 4000);
+}
 (function boot() {
   // Token hygiene: the one-time bootstrap query is consumed by the
   // server's 302; if it ever survives into the address bar, strip it.
@@ -1702,14 +1534,16 @@ window.__setSource = (kind) => setSource(kind === "sim" ? Sim : Live);
   });
   $("#calm-toggle").addEventListener("click", () => { prefs.calm = !prefs.calm; store.set("calm", prefs.calm ? "1" : null); applyCalm(); });
   $("#stop-server").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopServerArm", async () => {
+    app.serverStopped = true;
     await app.src.action("serverStop"); app.onConn("offline");
   }));
-  $("#sim-speed").addEventListener("change", (e) => { Sim.speed = +e.target.value; });
-  $("#to-live").addEventListener("click", async () => { if (await Live.probe()) setSource(Live); else app.showNotice(t("conn.reconnecting")); });
   window.addEventListener("hashchange", route);
+  // The banner's clock is local and always ticking while a run is
+  // live, so no quiet phase can ever look frozen.
+  setInterval(() => { if (app.runStatus === "running") app.refreshChrome(true); }, 1000);
   (async () => {
-    const liveOk = await Live.probe().catch(() => false);
-    await setSource(liveOk ? Live : Sim, true);
-    route();
+    app.src = Live;
+    if (await Live.probe().catch(() => false)) { await connectLive(); route(); }
+    else enterOffline();
   })();
 })();

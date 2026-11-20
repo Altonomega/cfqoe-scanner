@@ -514,7 +514,10 @@ export async function runBlockScreening({
     } else {
       totals.failed += 1;
     }
-    onSummary?.(summary, candidate);
+    // The observations ride along so observers that narrate probes
+    // (the web chromatogram) work from the measurements themselves,
+    // never from the summary's aggregates.
+    onSummary?.(summary, candidate, observations);
   }
 
   // One scheduler batch, processed exactly like a legacy screening batch:
