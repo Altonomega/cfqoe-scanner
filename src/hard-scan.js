@@ -349,6 +349,13 @@ export async function runHardScan({
   // Test seam with the scheduler/engine task shape: when null (every
   // production caller) probing binds to the real websocket probe below.
   task = null,
+  // Test seam mirroring startXray's own: an interpreter prefix for the
+  // located Xray path, forwarded to the finalize stage's startXray
+  // calls. Empty for every production caller (a real xray binary is
+  // spawned directly, exactly as before); the wiring tests use it to
+  // drive the fake-xray fixture through node itself, because a script
+  // file cannot be spawned directly on Windows.
+  xrayArgs = [],
 }) {
   const vless = parseVlessUri(vlessUri);
   assertWebsocketCapable(vless);
@@ -995,6 +1002,7 @@ export async function runHardScan({
       logger,
       vless,
       onProgress,
+      xrayArgs,
     }) {
       const tunnelResults = new Map();
       let xrayInfo = {
@@ -1109,6 +1117,7 @@ export async function runHardScan({
           try {
             xrayHandle ??= await startXray({
               xrayPath: located.path,
+              xrayArgs,
               vless,
               candidateIp: candidate.ip,
               startupTimeoutMs: settings.tunnel.startupTimeoutMs,
@@ -1236,6 +1245,7 @@ export async function runHardScan({
       logger,
       vless,
       onProgress: (event) => emitProgress(event, "finalize"),
+      xrayArgs,
     }),
     requirements = {
       browsing: settings.browsing.enabled,

@@ -388,7 +388,7 @@ const Sim = {
   snapshot() {
     const R = this.run || this.paused;
     return {
-      server: { version: "0.9.0", platform: (navigator.platform || "local") + " · simulated" },
+      server: { version: "0.9.1", platform: (navigator.platform || "local") + " · simulated" },
       status: { configReady: !!this.cfgDesc, xrayFound: true, verifyEnabled: true, resumeAvailable: !!this.paused },
       genome: this.genomeVecs(),
       run: R ? { mode: R.mode, runId: R.runId, status: this.run ? "running" : "paused-done", phase: R.phase, startedAt: R.startedAt, counters: R.counters, genome: R.mode === "hard" ? this.genomeVecs() : undefined, top: this.liveTop() } : null,

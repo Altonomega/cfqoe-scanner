@@ -32,10 +32,24 @@ function makeLayout({ rangesText = null } = {}) {
 
 // Raw HTTP so tests control the exact request line and headers
 // (fetch normalizes traversal paths and forbids the Host header).
+//
+// agent:false is load-bearing, not a preference: since Node 19 the
+// default global agent pools keep-alive sockets per host:port, and
+// every test in this file binds the SAME port (8797) with a fresh
+// server. A socket pooled from a stopped server can be handed to the
+// next test's first request before the agent processes its close —
+// the write lands on a dead connection and the request dies with
+// ECONNRESET "socket hang up" even though the new server is healthy
+// (CI 0.9.0: 9 failures on Node 20 ubuntu, the same signature as the
+// rare sandbox flake; the production server was never at fault — it
+// served the live field test on Node 20 without an error). One fresh
+// socket per request removes the mechanism; no assertion in this file
+// pins connection reuse, and the server-stop test's closing
+// ECONNREFUSED expectation is only well-defined without pooling.
 function rawRequest({ port, method = "GET", path: requestPath, headers = {}, body = null }) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { host: "127.0.0.1", port, method, path: requestPath, headers },
+      { host: "127.0.0.1", port, method, path: requestPath, headers, agent: false },
       (res) => {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
@@ -457,10 +471,25 @@ test("settings: a no-op PUT leaves the file byte-identical; edits round-trip; de
     const third = await get();
     assert.equal(third.settings.scan.timeoutMs, 6100);
     // The save was logged with the changed key NAME only (Shield §4).
-    const logText = fs
-      .readdirSync(layout.logs)
-      .map((name) => fs.readFileSync(path.join(layout.logs, name), "utf8"))
-      .join("\n");
+    // The logger's file sink is a buffered write stream by design —
+    // logging must never block a measurement — so the record reaches
+    // disk asynchronously and a one-shot read races its flush (CI
+    // 0.9.0: this assertion alone failed on Node 22 windows while the
+    // byte-parity assertions around it, all synchronous and
+    // platform-independent, passed on every leg). The pin is about
+    // the record's content, so wait for the content with a deadline,
+    // the same bounded-poll shape this file uses for run state.
+    const readLogText = () =>
+      fs
+        .readdirSync(layout.logs)
+        .map((name) => fs.readFileSync(path.join(layout.logs, name), "utf8"))
+        .join("\n");
+    let logText = "";
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      logText = readLogText();
+      if (logText.includes("web.control.settings-save")) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     assert.ok(logText.includes("web.control.settings-save"));
     assert.ok(logText.includes("scan.timeoutMs"));
 
@@ -630,7 +659,7 @@ test("run lifecycle: start, 409 while active, strict event sequence, stop, pause
   try {
     const { cookie } = await bootstrap(port, bootstrapUrl);
     const sse = http.get(
-      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie } },
+      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie }, agent: false },
       (res) => {
         let buffer = "";
         res.on("data", (chunk) => {
@@ -932,7 +961,7 @@ test("run failure: a run whose engine throws ends in run-state failed, with run.
   try {
     const { cookie } = await bootstrap(port, bootstrapUrl);
     const sse = http.get(
-      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie } },
+      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie }, agent: false },
       (res) => {
         let buffer = "";
         res.on("data", (chunk) => {
