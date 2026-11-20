@@ -401,11 +401,6 @@ async function editSettings({ rl, layout, settings }) {
       group: "load",
       field: "uploadFlows",
     },
-    {
-      label: "Real-load minimum bytes",
-      group: "load",
-      field: "minBytes",
-    },
     { label: "Hard concurrent IPs", group: "hard", field: "concurrency" },
     {
       label: "Hard screening rounds",
@@ -495,7 +490,10 @@ export function quickProfile(base) {
     tunnel: { ...base.tunnel, limit: 3, rounds: 1 },
     streaming: {
       ...base.streaming,
-      maxSegments: base.streaming.quickSegments ?? 3,
+      // Fallbacks name the real defaults (settings.js): they fire only
+      // on a hand-mangled settings object, which is exactly when a
+      // fallback must not lie about the value it stands in for.
+      maxSegments: base.streaming.quickSegments ?? 2,
     },
     browsing: { ...base.browsing, assetLimit: 4 },
   };
@@ -522,7 +520,7 @@ export function researchProfile(base) {
     },
     streaming: {
       ...base.streaming,
-      maxSegments: base.streaming.researchSegments ?? 29,
+      maxSegments: base.streaming.researchSegments ?? 6,
     },
     browsing: {
       ...base.browsing,
@@ -538,7 +536,6 @@ export function researchProfile(base) {
       fanoutRequests: Math.max(6, base.load?.fanoutRequests || 0),
       idleSamples: Math.max(4, base.load?.idleSamples || 0),
       timeoutMs: Math.max(12e3, base.load?.timeoutMs || 0),
-      minBytes: Math.max(12582912, base.load?.minBytes || 0),
     },
   };
 }
