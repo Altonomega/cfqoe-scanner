@@ -5,10 +5,12 @@ import {
   buildBlockPlan,
   blockProbeOrder,
   blockCandidate,
+  blockHalfProbeOrder,
+  blockHalfCandidate,
   blockRunDepthCap,
   splitBlock,
 } from '../src/candidate/blocks.js';
-import { parseRangeList, ipToInt } from '../src/candidate/ipv4.js';
+import { parseRangeList, ipToInt, intToIp } from '../src/candidate/ipv4.js';
 
 function collectBlockIps(block, seed = 404) {
   const ips = [];
@@ -175,4 +177,72 @@ test('splits recurse to /26 and stop at the depth cap', () => {
 test('unsplittable blocks return null', () => {
   const [single] = buildBlockPlan(['192.0.2.7/32']).blocks;
   assert.equal(splitBlock(single), null);
+});
+
+test('half streams partition the usable addresses at the span midpoint', () => {
+  const [block] = buildBlockPlan(['192.0.2.0/24']).blocks;
+  const lower = blockHalfProbeOrder(block, 'lower', 404);
+  const upper = blockHalfProbeOrder(block, 'upper', 404);
+  // Usable offsets 1–254 split at the midpoint 128: 127 addresses each.
+  assert.equal(lower.length, 127);
+  assert.equal(upper.length, 127);
+  assert.equal(new Set(lower).size, 127);
+  assert.equal(new Set(upper).size, 127);
+  assert.ok(lower.every((address) => address - block.base < 128));
+  assert.ok(upper.every((address) => address - block.base >= 128));
+  // Together the halves cover exactly the block's usable addresses.
+  const usable = new Set(collectBlockIps(block));
+  assert.deepEqual(
+    new Set([...lower, ...upper].map((address) => intToIp(address))),
+    usable,
+  );
+});
+
+test('half candidates are deterministic, contained, and exhaust cleanly', () => {
+  const [block] = buildBlockPlan(['192.0.2.0/24']).blocks;
+  const first = blockHalfCandidate(block, 'upper', 5, 777);
+  assert.deepEqual(blockHalfCandidate(block, 'upper', 5, 777), first);
+  assert.equal(first.blockId, block.blockId);
+  assert.ok(first.hostOffset >= 128);
+  const seen = new Set();
+  for (let index = 0; index < 127; index += 1) {
+    const candidate = blockHalfCandidate(block, 'lower', index, 777);
+    assert.ok(candidate.hostOffset < 128);
+    assert.ok(!seen.has(candidate.ip));
+    seen.add(candidate.ip);
+  }
+  assert.equal(blockHalfCandidate(block, 'lower', 127, 777), null);
+  assert.equal(blockHalfCandidate(block, 'lower', -1, 777), null);
+  assert.equal(blockHalfCandidate(block, 'middle', 0, 777), null);
+  assert.deepEqual(blockHalfProbeOrder(block, 'middle', 777), []);
+});
+
+test('half streams are independent of the main permutation and each other', () => {
+  const [block] = buildBlockPlan(['192.0.2.0/24']).blocks;
+  const mainBefore = collectBlockIps(block, 99);
+  const lower = blockHalfProbeOrder(block, 'lower', 99).map(intToIp);
+  const upper = blockHalfProbeOrder(block, 'upper', 99).map(intToIp);
+  // Drawing from the half streams leaves the main order untouched.
+  assert.deepEqual(collectBlockIps(block, 99), mainBefore);
+  // The lower half's stream is not the main order filtered to the half,
+  // and a different seed produces a different half order.
+  const mainLower = mainBefore.filter((ip) => ipToInt(ip) - block.base < 128);
+  assert.notDeepEqual(lower, mainLower);
+  assert.notDeepEqual(blockHalfProbeOrder(block, 'lower', 100).map(intToIp), lower);
+  assert.notDeepEqual(upper, lower);
+});
+
+test('half streams work on split children', () => {
+  const [block] = buildBlockPlan(['192.0.2.0/24']).blocks;
+  const [lowerChild] = splitBlock(block);
+  const lower = blockHalfProbeOrder(lowerChild, 'lower', 404);
+  const upper = blockHalfProbeOrder(lowerChild, 'upper', 404);
+  // The child's usable offsets are 1–127; its midpoint is 64.
+  assert.equal(lower.length, 63);
+  assert.equal(upper.length, 64);
+  assert.ok(lower.every((address) => address - lowerChild.base < 64));
+  assert.ok(upper.every((address) => address - lowerChild.base >= 64));
+  const candidate = blockHalfCandidate(lowerChild, 'upper', 0, 404);
+  assert.equal(candidate.blockId, lowerChild.blockId);
+  assert.ok(candidate.hostOffset >= 64 && candidate.hostOffset < 128);
 });

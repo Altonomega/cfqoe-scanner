@@ -200,6 +200,77 @@ export function blockRunDepthCap(block) {
   return Math.min(block.usable, MAX_BLOCK_RUN_DEPTH);
 }
 
+const halfProbeOrderCache = new WeakMap();
+
+// Arbitrary fixed tags keying each half's stream apart from the block's
+// main permutation and from the other half (5b analysis §6): a targeted
+// half draw must be an independent draw, so it never consumes or
+// correlates with the main probe order.
+const HALF_STREAM_TAGS = { lower: 0x1f123bb5, upper: 0x2c1b3c6d };
+
+// The usable addresses of one address half of a block, in address order.
+// Half membership uses the same predicate as the engine's per-half
+// accounting — host offset below the span midpoint is the lower half —
+// so a candidate drawn here is always counted in the half it was drawn
+// for.
+function halfUsableAddresses(block, half) {
+  const midpoint = block.size / 2;
+  const addresses = [];
+  for (const segment of block.segments) {
+    for (let index = 0; index < segment.usable; index += 1) {
+      const address = segment.base + segment.startOffset + index;
+      if ((address - block.base < midpoint) === (half === 'lower')) {
+        addresses.push(address);
+      }
+    }
+  }
+  return addresses;
+}
+
+// One half's usable addresses as a seeded permutation: a Fisher–Yates
+// shuffle driven by mulberry32(seed XOR base XOR halfTag), independent
+// of the block's main stream. Cached per (block, seed, half) and shared
+// — treat it as read-only.
+export function blockHalfProbeOrder(block, half, seed = 404) {
+  if (half !== 'lower' && half !== 'upper') return [];
+  let byKey = halfProbeOrderCache.get(block);
+  if (!byKey) {
+    byKey = new Map();
+    halfProbeOrderCache.set(block, byKey);
+  }
+  const key = `${seed}:${half}`;
+  const cached = byKey.get(key);
+  if (cached) return cached;
+  const order = halfUsableAddresses(block, half);
+  const random = mulberry32((seed ^ block.base ^ HALF_STREAM_TAGS[half]) >>> 0);
+  for (let index = order.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [order[index], order[swapIndex]] = [order[swapIndex], order[index]];
+  }
+  byKey.set(key, order);
+  return order;
+}
+
+// The candidate at a position in one half's probe order, in the same
+// shape as blockCandidate. Used by the split-coverage pass's step E to
+// draw into a chosen half of a block (5b analysis §6); returns null for
+// an unknown half or once the half's usable addresses are exhausted.
+export function blockHalfCandidate(block, half, probeIndex, seed = 404) {
+  if (!Number.isInteger(probeIndex) || probeIndex < 0) return null;
+  const order = blockHalfProbeOrder(block, half, seed);
+  if (probeIndex >= order.length) return null;
+  const address = order[probeIndex];
+  return {
+    ip: intToIp(address),
+    range: block.range,
+    block: block.blockId,
+    blockId: block.blockId,
+    blockIndex: block.index,
+    hostOffset: address - block.base,
+    probeIndex,
+  };
+}
+
 function clipSegmentsToSpan(segments, spanBase, spanSize) {
   const spanEnd = spanBase + spanSize;
   const clipped = [];

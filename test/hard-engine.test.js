@@ -287,6 +287,82 @@ test('a heterogeneous block splits and its hot half keeps contributing candidate
   ));
 });
 
+test('split-coverage pass: step E promotes a starved 0-success block and stage 1 splits it', async () => {
+  const plan = planFor(1);
+  const block = plan.blocks[0];
+  // Seed 6 places all three primer draws in the upper half (offsets
+  // 152/246/202), so with the upper half cold the primer is a 0/3
+  // shutout — the class UCB expansion starves by construction.
+  const settings = engineSettings({ budgetProbes: 20 });
+  settings.scan.seed = 6;
+  const task = (candidate) => (candidate.hostOffset < block.size / 2
+    ? okTask(candidate)
+    : {
+      ok: false, statusCode: null, handshakeMs: null, connectMs: null,
+      cfRay: null, colo: null, error: 'timeout',
+    });
+  const result = await runBlockScreening({
+    blocks: plan.blocks,
+    settings,
+    task,
+    concurrency: 4,
+  });
+  assert.equal(result.totals.blocksExtended, 1);
+  assert.equal(result.totals.blocksPromoted, 1);
+  assert.equal(result.totals.suspectsServed, 1);
+  assert.ok(result.totals.reserveProbes > 0);
+  assert.ok(
+    result.totals.reserveProbes <= Math.floor(0.85 * (20 - 3)),
+    `reserve ${result.totals.reserveProbes} exceeded its slice`,
+  );
+  assert.equal(result.splits.length, 1);
+  assert.equal(result.splits[0].parent, block.blockId);
+  assert.equal(result.splits[0].halves.upperSuccesses, 0);
+  assert.ok(result.splits[0].halves.lowerSuccesses >= 4);
+});
+
+test('split-coverage pass: a zero reserve fraction disables the pass entirely', async () => {
+  const plan = planFor(1);
+  const block = plan.blocks[0];
+  const settings = engineSettings({ budgetProbes: 20, splitReserveFraction: 0 });
+  settings.scan.seed = 6;
+  const task = (candidate) => (candidate.hostOffset < block.size / 2
+    ? okTask(candidate)
+    : {
+      ok: false, statusCode: null, handshakeMs: null, connectMs: null,
+      cfRay: null, colo: null, error: 'timeout',
+    });
+  const result = await runBlockScreening({
+    blocks: plan.blocks,
+    settings,
+    task,
+    concurrency: 4,
+  });
+  assert.equal(result.totals.reserveProbes, 0);
+  assert.equal(result.totals.blocksExtended, 0);
+  assert.equal(result.totals.blocksPromoted, 0);
+  assert.equal(result.totals.suspectsServed, 0);
+});
+
+test('split-coverage pass: reserve spend is capped at the slice of post-primer headroom', async () => {
+  const plan = planFor(8);
+  const { task } = recording(failTask('timeout'));
+  const result = await runBlockScreening({
+    blocks: plan.blocks,
+    settings: engineSettings({ budgetProbes: 30 }),
+    task,
+    concurrency: 4,
+  });
+  // Primer spends 24 of 30; the slice is floor(0.85 × 6) = 5, checked
+  // before each block's stage, so spend lands in [5, 5 + one stage].
+  assert.equal(result.totals.primerProbes, 24);
+  assert.ok(result.totals.reserveProbes >= 5, `reserve ${result.totals.reserveProbes} < slice 5`);
+  assert.ok(result.totals.reserveProbes <= 7, `reserve ${result.totals.reserveProbes} overshot the slice by more than one stage`);
+  assert.ok(result.totals.blocksExtended >= 3);
+  assert.equal(result.totals.blocksPromoted, 0);
+  assert.ok(result.totals.probesSpent <= 30);
+});
+
 test('summaries stream through onSummary with block provenance, one per tested candidate', async () => {
   const plan = planFor(3);
   const summaries = [];
@@ -354,6 +430,15 @@ test('crash/resume: a wave-aligned checkpoint resumes into the identical probe s
   const combined = [...part.catalog.probeLog, ...resumed.catalog.probeLog]
     .map((entry) => entry.ip);
   assert.deepEqual(combined, full.catalog.probeLog.map((entry) => entry.ip));
+  // The split-coverage pass settled inside part 1 (it spent reserve
+  // probes there); the resumed run restores the pass counters and
+  // spends no reserve probes of its own — the identical combined
+  // probe sequence above is the sharp form of the same fact.
+  assert.ok(partResult.totals.reserveProbes > 0);
+  assert.equal(
+    resumedResult.totals.reserveProbes,
+    partResult.totals.reserveProbes,
+  );
   assert.deepEqual(
     resumedResult.pool.map((summary) => summary.ip).sort(),
     fullResult.pool.map((summary) => summary.ip).sort(),
