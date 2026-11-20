@@ -8,6 +8,7 @@ import {
   clearProgress,
   phaseLabel,
   hardRunSummaryLines,
+  catalogLine,
 } from "./ui.js";
 import {
   ensureDirectories,
@@ -283,6 +284,7 @@ async function runHardCommand(parsed, { resume }) {
       logger,
       runId: logger.runId,
       resume,
+      onStart: (info) => console.log(color.dim(catalogLine(info))),
       onProgress: (progress) =>
         writeProgress(phaseLabel(progress.phase), {
           ...progress,

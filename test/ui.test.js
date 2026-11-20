@@ -5,6 +5,7 @@ import {
   formatDurationMs,
   stoppedReasonText,
   hardRunSummaryLines,
+  catalogLine,
 } from '../src/ui.js';
 
 test('phaseLabel maps internal phases to plain language, raw fallback', () => {
@@ -31,6 +32,31 @@ test('stoppedReasonText covers the engine vocabulary', () => {
   assert.equal(stoppedReasonText('canceled'), 'stopped by user');
   assert.equal(stoppedReasonText('completed'), 'completed');
   assert.equal(stoppedReasonText('novel'), 'novel');
+});
+
+// Menu and CLI both render the catalog line through catalogLine, so
+// pinning the shared helper pins the parity between the surfaces.
+test('catalog line: blocks engine states blocks, IPs, ranges, budget', () => {
+  assert.equal(
+    catalogLine({
+      engine: 'blocks',
+      blocks: 7697,
+      totalCandidates: 1970432,
+      ranges: 753,
+      budgetProbes: 72000,
+    }),
+    'Catalog: 7697 blocks · 1970432 IPs · 753 ranges · probe budget 72000',
+  );
+  assert.equal(
+    catalogLine({
+      engine: 'legacy',
+      blocks: null,
+      totalCandidates: 1970432,
+      ranges: 753,
+      budgetProbes: null,
+    }),
+    'Catalog: 1970432 IPs · 753 ranges (legacy round-robin)',
+  );
 });
 
 test('hard summary: block-adaptive run reports probes, blocks, stop reason', () => {

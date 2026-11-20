@@ -119,6 +119,22 @@ export function writeProgress(label, state) {
       readline.clearLine(process.stdout, 0),
       process.stdout.write(line.slice(0, Math.max(20, terminalWidth() - 1)))));
 }
+// The start-of-run Hard catalog line, shared by the menu and the CLI
+// for the same reason as the end summary below: the run's scope
+// (engine, blocks, IPs, ranges, probe budget) is the first thing a
+// user checks against their intent, and the two surfaces must not
+// drift apart in how they state it.
+export function catalogLine({
+  engine,
+  blocks,
+  totalCandidates,
+  ranges,
+  budgetProbes,
+}) {
+  return "blocks" === engine
+    ? `Catalog: ${blocks} blocks · ${totalCandidates} IPs · ${ranges} ranges · probe budget ${budgetProbes}`
+    : `Catalog: ${totalCandidates} IPs · ${ranges} ranges (legacy round-robin)`;
+}
 // The end-of-run Hard summary, shared by the menu and the CLI so the
 // two surfaces can never drift apart. Everything reads from the
 // report totals and the run's return value — the numbers the report

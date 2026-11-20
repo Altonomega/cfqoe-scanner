@@ -12,6 +12,7 @@ import {
   terminalWidth,
   phaseLabel,
   hardRunSummaryLines,
+  catalogLine,
 } from "../ui.js";
 import {
   ensureDirectories,
@@ -654,14 +655,7 @@ async function runHardScanFlow({ rl, layout }, resume) {
       logger,
       runId: logger.runId,
       resume,
-      onStart: ({ engine, blocks, totalCandidates, ranges, budgetProbes }) =>
-        console.log(
-          `  ${color.dim(
-            "blocks" === engine
-              ? `Catalog: ${blocks} blocks · ${totalCandidates} IPs · ${ranges} ranges · probe budget ${budgetProbes}`
-              : `Catalog: ${totalCandidates} IPs · ${ranges} ranges (legacy round-robin)`,
-          )}`,
-        ),
+      onStart: (info) => console.log(`  ${color.dim(catalogLine(info))}`),
       onProgress: (event) =>
         writeProgress(phaseLabel(event.phase), {
           ...event,
