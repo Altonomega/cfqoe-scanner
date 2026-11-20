@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { createHash } from "node:crypto";
 import {
   parseVlessUri,
   describeVless,
@@ -34,8 +35,17 @@ import {
 } from "./report.js";
 import { runLoadProbe } from "./probe/load.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
-import { compareEligibilitySummaries } from "./hard-engine.js";
-export const HARD_STATE_VERSION = 3;
+import {
+  compareEligibilitySummaries,
+  runBlockScreening,
+} from "./hard-engine.js";
+import { buildBlockPlan } from "./candidate/blocks.js";
+import { loadReputation, saveReputation } from "./hard-reputation.js";
+// The newest checkpoint format, written by the block-adaptive engine.
+// The legacy engine keeps writing its v3 format (see the state creator
+// in runHardScan): a checkpoint always belongs to the engine that
+// created it, so both versions stay readable forever.
+export const HARD_STATE_VERSION = 4;
 function clampInt(value, fallback = 1, max = 64) {
   const parsed = Math.floor(Number(value));
   return !Number.isFinite(parsed) || parsed <= 0
@@ -81,13 +91,27 @@ function removeStateFile(layout) {
 function isLegacyState(state) {
   return state.version < 3 || Number.isInteger(state.cursor?.hostIndex);
 }
+function isBlocksState(state) {
+  return "blocks" === state.engine;
+}
+function traversalForState(state) {
+  return isBlocksState(state)
+    ? "block-adaptive"
+    : isLegacyState(state)
+      ? "legacy-range-sequential"
+      : "range-round-robin";
+}
+function catalogHashOf(rangesText) {
+  return createHash("sha256").update(rangesText).digest("hex");
+}
 function writeSnapshot(state) {
   const legacy = isLegacyState(state),
+    blocks = isBlocksState(state),
     snapshot = {
       runId: state.runId,
       status: state.status,
       scope: "run-relative",
-      traversal: legacy ? "legacy-range-sequential" : "range-round-robin",
+      traversal: traversalForState(state),
       execution: "parallel-batched",
       startedAt: state.startedAt,
       updatedAt: new Date().toISOString(),
@@ -98,9 +122,16 @@ function writeSnapshot(state) {
         retryQueued: state.counts.retryQueued,
         retryRecovered: state.counts.retryRecovered,
         total: state.total,
-        rangeIndex: state.cursor.rangeIndex,
-        passIndex: legacy ? null : state.cursor.passIndex,
+        rangeIndex: blocks ? null : state.cursor.rangeIndex,
+        passIndex: blocks || legacy ? null : state.cursor.passIndex,
         hostIndex: legacy ? state.cursor.hostIndex : null,
+        ...(blocks
+          ? {
+              phase: state.phase,
+              blocksPrimed: state.counts.blocksPrimed,
+              blocksTotal: state.blocksTotal,
+            }
+          : {}),
       },
       files: state.files,
       topEligibility: state.topEligibility,
@@ -137,12 +168,68 @@ function writeSnapshot(state) {
       { mode: 384 },
     ));
 }
+// Checkpoint v4 for the block-adaptive engine. Same file layout and
+// finalize inputs as v3; what changes is the screening record: no
+// traversal cursor (the engine's serialized per-block state replaces
+// it), a phase marker, and the catalog hash the block state is only
+// meaningful against. `total` is the planned probe total — the run's
+// probe budget, a denominator the run can actually reach — not the
+// catalog size the legacy sweep walks.
+function createBlocksState({
+  layout,
+  runId,
+  settings,
+  target,
+  rangesCount,
+  blocksTotal,
+  catalogHash,
+}) {
+  const basePath = path.join(layout.hardScanDir, `run-${runId}`);
+  return {
+    version: HARD_STATE_VERSION,
+    runId,
+    mode: "hard",
+    engine: "blocks",
+    traversal: "block-adaptive",
+    execution: "parallel-batched",
+    status: "in_progress",
+    startedAt: new Date().toISOString(),
+    target,
+    settings,
+    total: settings.hard.budgetProbes,
+    rangesCount,
+    blocksTotal,
+    catalogHash,
+    cursor: null,
+    phase: "primer",
+    blockState: null,
+    counts: {
+      tested: 0,
+      eligible: 0,
+      failed: 0,
+      retryQueued: 0,
+      retryRecovered: 0,
+      primerProbes: 0,
+      expansionProbes: 0,
+      blocksPrimed: 0,
+      blocksExpanded: 0,
+    },
+    files: {
+      eligibilityFile: `${basePath}.eligibility.ndjson`,
+      retryFile: `${basePath}.retry.ndjson`,
+      snapshotJson: `${basePath}.partial.json`,
+      snapshotTxt: `${basePath}.partial.txt`,
+      archiveStateFile: `${basePath}.state.json`,
+    },
+    topEligibility: [],
+  };
+}
 async function runDelayedRetries({
   state,
   settings,
-  vless,
   logger,
   onProgress,
+  task,
 }) {
   if (!settings.hard.delayedRetry) return [];
   const retryCandidates = await (async function (file, limit) {
@@ -161,7 +248,11 @@ async function runDelayedRetries({
           if (!entry.ip || seen.has(entry.ip)) continue;
           if (
             (seen.add(entry.ip),
-            entries.push({ ip: entry.ip, range: entry.range }),
+            entries.push({
+              ip: entry.ip,
+              range: entry.range,
+              block: entry.block,
+            }),
             entries.length >= limit)
           )
             break;
@@ -184,12 +275,7 @@ async function runDelayedRetries({
     rounds: clampInt(settings.scan.rounds, 2, 16),
     concurrency,
     minimumSuccessRate: settings.scan.minimumSuccessRate,
-    task: async (candidate) =>
-      probeWebsocket({
-        ip: candidate.ip,
-        vless,
-        timeoutMs: settings.scan.timeoutMs,
-      }),
+    task,
     onCandidateDone: ({ candidate, observations, finished, total }) => {
       (successRate(observations) >= settings.scan.minimumSuccessRate &&
         (recovered += 1),
@@ -220,6 +306,7 @@ async function runDelayedRetries({
           range: candidate.range,
           eligibility: observations,
           temporalBlocks: 2,
+          block: candidate.block,
         }),
       )
   );
@@ -235,13 +322,27 @@ export async function runHardScan({
   onProgress = () => {},
   runId,
   resume = !1,
+  // Test seam with the scheduler/engine task shape: when null (every
+  // production caller) probing binds to the real websocket probe below.
+  task = null,
 }) {
   const vless = parseVlessUri(vlessUri);
   assertWebsocketCapable(vless);
   const target = describeVless(vless),
-    ranges = parseRangeList(fs.readFileSync(layout.rangesFile, "utf8")),
+    rangesText = fs.readFileSync(layout.rangesFile, "utf8"),
+    ranges = parseRangeList(rangesText),
     plan = buildRangePlan(ranges);
-  let state;
+  let state,
+    blockPlan = null,
+    catalogHash = null;
+  // The block plan and catalog hash exist only for blocks-engine runs;
+  // building them is skipped entirely on the legacy path so it cannot
+  // gain a new failure mode.
+  const prepareBlocks = () => {
+    if (!blockPlan)
+      ((blockPlan = buildBlockPlan(ranges)),
+        (catalogHash = catalogHashOf(rangesText)));
+  };
   if (resume && stateExists(layout))
     ((state = (function (loaded) {
       return (
@@ -258,11 +359,31 @@ export async function runHardScan({
       (state.settings = settings),
       (state.status = "in_progress"),
       (state.execution = "parallel-batched"),
-      (state.traversal = isLegacyState(state)
-        ? "legacy-range-sequential"
-        : "range-round-robin"));
+      (state.traversal = traversalForState(state)),
+      // A resumed v4 checkpoint keeps its engine whatever the current
+      // settings say (the engine setting affects new runs only); patch
+      // in any v4 field an early build may not have written.
+      isBlocksState(state) &&
+        ((state.blockState ??= null),
+        (state.phase ??= "primer"),
+        (state.counts.primerProbes ??= 0),
+        (state.counts.expansionProbes ??= 0),
+        (state.counts.blocksPrimed ??= 0),
+        (state.counts.blocksExpanded ??= 0)));
   else {
-    ((state = (function ({
+    "blocks" === settings.hard.engine && prepareBlocks();
+    ((state =
+      "blocks" === settings.hard.engine
+        ? createBlocksState({
+            layout,
+            runId,
+            settings,
+            target,
+            rangesCount: ranges.length,
+            blocksTotal: blockPlan.totalBlocks,
+            catalogHash,
+          })
+        : (function ({
       layout,
       runId,
       settings,
@@ -314,7 +435,19 @@ export async function runHardScan({
         fs.rmSync(file, { force: !0 });
       } catch {}
   }
-  const requestedConcurrency = clampInt(
+  // The probe binding for every stage below: the injected task when a
+  // test supplies one, otherwise the real websocket probe. It reads
+  // `settings` lazily because calibration replaces the settings object
+  // further down.
+  const probeTask =
+      task ??
+      (async (candidate) =>
+        probeWebsocket({
+          ip: candidate.ip,
+          vless,
+          timeoutMs: settings.scan.timeoutMs,
+        })),
+    requestedConcurrency = clampInt(
       settings.hard.concurrency,
       settings.scan.concurrency,
     ),
@@ -330,6 +463,17 @@ export async function runHardScan({
       calibration: settings.calibration,
       requestedConcurrency,
       timeoutMs: settings.scan.timeoutMs,
+      ...(task
+        ? {
+            probeTask: ({ ip }) =>
+              task(
+                calibrationCandidates.find(
+                  (candidate) => candidate.ip === ip,
+                ) ?? { ip, range: null },
+                1,
+              ),
+          }
+        : {}),
     });
   ((settings = {
     ...settings,
@@ -338,7 +482,38 @@ export async function runHardScan({
   }),
     (state.settings = settings));
   const concurrency = calibration.selectedConcurrency,
-    screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5);
+    screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5),
+    blocksEngine = isBlocksState(state);
+  let reputationStore = null,
+    initialBlockState = null;
+  if (blocksEngine) {
+    prepareBlocks();
+    state.blocksTotal = blockPlan.totalBlocks;
+    if (resume) {
+      // The persisted block arrays are only meaningful for the exact
+      // catalog they were built from: on a hash mismatch the block
+      // state is discarded, but the eligibility NDJSON, counts, and
+      // top list are kept — earned results are never thrown away; the
+      // primer simply restarts over the new block space.
+      if (state.catalogHash === catalogHash)
+        initialBlockState = state.blockState ?? null;
+      else
+        logger.warn("hard.blocks.catalog-changed", {
+          runId: state.runId,
+          savedHash: state.catalogHash ?? null,
+          currentHash: catalogHash,
+        });
+      state.catalogHash = catalogHash;
+    }
+    reputationStore = loadReputation(layout.reputationFile, {
+      catalogHash,
+      knownBlocks: blockPlan.blocks.map((block) => block.blockId),
+      halfLifeDays: settings.hard.reputationHalfLifeDays,
+      skipAgeDays: settings.hard.reputationSkipAgeDays,
+      confirmAgeDays: settings.hard.reputationConfirmAgeDays,
+      maxStoredAttempts: settings.hard.reputationMaxStoredAttempts,
+    });
+  }
   let canceled = !1;
   const removeCancelWatcher = (function (onCancel) {
       const onSignal = () => onCancel("signal");
@@ -388,16 +563,101 @@ export async function runHardScan({
     target,
     totalCandidates: plan.total,
     ranges: ranges.length,
-    traversal: legacy ? "legacy-range-sequential" : "range-round-robin",
+    traversal: traversalForState(state),
+    ...(blocksEngine ? { blocks: blockPlan.totalBlocks } : {}),
     execution: "parallel-batched",
     concurrency,
     screeningRounds,
     delayedRetry: Boolean(settings.hard.delayedRetry),
     resume,
   });
-  let sinceSave = 0;
+  let sinceSave = 0,
+    engineOutcome = null;
   try {
-    for (; !canceled;) {
+    if (blocksEngine) {
+      engineOutcome = await runBlockScreening({
+        blocks: blockPlan.blocks,
+        settings,
+        task: probeTask,
+        concurrency,
+        reputation: reputationStore,
+        initialBlockState,
+        onSummary: (summary) => {
+          (appendJsonLine(state.files.eligibilityFile, summary),
+            (state.counts.tested += 1),
+            summary.eligibility.successRate >= settings.scan.minimumSuccessRate
+              ? (state.counts.eligible += 1)
+              : (state.counts.failed += 1),
+            (state.topEligibility = insertTop(
+              state.topEligibility,
+              summary,
+              settings.hard.liveTop,
+            )),
+            logger.debug("hard.eligibility", {
+              ip: summary.ip,
+              range: summary.range,
+              eligibility: summary.eligibility,
+            }),
+            (sinceSave += 1),
+            // Snapshot only, never the checkpoint: the checkpoint's
+            // counts and block state must move together, and the block
+            // state exists only when the engine returns (below). A
+            // crash therefore resumes from the last returned engine
+            // state and re-probes the difference — the NDJSON dedup
+            // and the checkpoint counts stay consistent, the same
+            // contract the legacy in-flight batch already has.
+            sinceSave >= settings.hard.saveEvery &&
+              (writeSnapshot(state), (sinceSave = 0)));
+        },
+        onProgress: (event) => {
+          // The checkpoint phase tracks the engine's screening stage;
+          // the split-coverage pass surfaces to callers under its own
+          // progress label (hard-coverage) between primer and
+          // expansion.
+          ("hard-primer" === event.phase
+            ? (state.phase = "primer")
+            : "hard-split-coverage" === event.phase
+              ? (state.phase = "coverage")
+              : "hard-expansion" === event.phase &&
+                (state.phase = "expansion"),
+            onProgress({
+              ...event,
+              phase:
+                "hard-split-coverage" === event.phase
+                  ? "hard-coverage"
+                  : event.phase,
+            }));
+        },
+        logger,
+        isCanceled: () => canceled,
+        runId: state.runId,
+      });
+      // The engine has returned — on completion or on cancel — so the
+      // serialized block state and the counters derived from it move
+      // into the checkpoint together, and the retries it queued join
+      // the shared retry file the finalize stage reads.
+      ((state.blockState = engineOutcome.blockState),
+        (state.counts.primerProbes = engineOutcome.totals.primerProbes),
+        (state.counts.expansionProbes =
+          engineOutcome.totals.expansionProbes),
+        (state.counts.blocksPrimed = engineOutcome.totals.blocksPrimed),
+        (state.counts.blocksExpanded = engineOutcome.totals.blocksExpanded),
+        (state.counts.retryQueued += engineOutcome.totals.retryQueued));
+      for (const retry of engineOutcome.retryQueue)
+        appendJsonLine(state.files.retryFile, retry);
+      // Reputation is saved only on the engine's natural completion:
+      // the engine merges results into the store only then, and saving
+      // an unmerged store would still persist the load-time decay
+      // rebasing — a canceled or valve-aborted run leaves the file
+      // exactly as it found it.
+      if (engineOutcome.completed)
+        (saveReputation(layout.reputationFile, reputationStore),
+          logger.info("hard.reputation.saved", {
+            blocks: Object.keys(reputationStore.blocks).length,
+          }));
+      if (!canceled) state.phase = "finalize";
+    }
+    for (; !blocksEngine && !canceled;) {
       const batch = collectCandidateBatch({
         plan,
         cursor: state.cursor,
@@ -412,12 +672,7 @@ export async function runHardScan({
         rounds: screeningRounds,
         concurrency,
         minimumSuccessRate: settings.scan.minimumSuccessRate,
-        task: async (candidate) =>
-          probeWebsocket({
-            ip: candidate.ip,
-            vless,
-            timeoutMs: settings.scan.timeoutMs,
-          }),
+        task: probeTask,
         onCandidateDone: ({ candidate, observations, finished }) => {
           (successRate(observations) >= settings.scan.minimumSuccessRate
             ? (batchEligible += 1)
@@ -503,7 +758,13 @@ export async function runHardScan({
     })(state.files.eligibilityFile, settings.hard.finalTop),
     retrySummaries = canceled
       ? []
-      : await runDelayedRetries({ state, settings, vless, logger, onProgress }),
+      : await runDelayedRetries({
+          state,
+          settings,
+          logger,
+          onProgress,
+          task: probeTask,
+        }),
     finalists = [
       ...topEligibility.filter(
         (entry) => !retrySummaries.some((summary) => summary.ip === entry.ip),
@@ -515,7 +776,6 @@ export async function runHardScan({
     verified = await (async function ({
       candidates,
       settings,
-      vless,
       logger,
       onProgress,
     }) {
@@ -526,7 +786,11 @@ export async function runHardScan({
       if (0 === count) return candidates;
       const finalists = candidates
           .slice(0, count)
-          .map((entry) => ({ ip: entry.ip, range: entry.range })),
+          .map((entry) => ({
+            ip: entry.ip,
+            range: entry.range,
+            block: entry.block,
+          })),
         concurrency = clampInt(
           settings.hard.concurrency,
           settings.scan.concurrency,
@@ -556,12 +820,7 @@ export async function runHardScan({
               candidates: finalists,
               concurrency,
               sprt: settings.verification?.sprt,
-              task: async (candidate) =>
-                probeWebsocket({
-                  ip: candidate.ip,
-                  vless,
-                  timeoutMs: settings.scan.timeoutMs,
-                }),
+              task: probeTask,
               onCandidateDone: (result) => {
                 ("accept" === result.decision
                   ? (accepted += 1)
@@ -574,12 +833,7 @@ export async function runHardScan({
               rounds: settings.scan.rounds,
               concurrency,
               minimumSuccessRate: settings.scan.minimumSuccessRate,
-              task: async (candidate) =>
-                probeWebsocket({
-                  ip: candidate.ip,
-                  vless,
-                  timeoutMs: settings.scan.timeoutMs,
-                }),
+              task: probeTask,
               onCandidateDone: (result) => {
                 (successRate(result.observations) >=
                 settings.scan.minimumSuccessRate
@@ -595,6 +849,7 @@ export async function runHardScan({
               range: candidate.range,
               eligibility: observations,
               temporalBlocks: 2,
+              block: candidate.block,
             });
             return (
               (summary.verification = {
@@ -616,7 +871,7 @@ export async function runHardScan({
           .map((entry) => verifiedByIp.get(entry.ip) || entry)
           .sort(compareEligibilitySummaries)
       );
-    })({ candidates: finalists, settings, vless, logger, onProgress }),
+    })({ candidates: finalists, settings, logger, onProgress }),
     { xrayInfo, tunnelResults } = await (async function ({
       candidates,
       settings,
@@ -818,6 +1073,7 @@ export async function runHardScan({
       candidates,
       xrayInfo,
       canceled,
+      engineOutcome,
     }) {
       const ranked = rankCandidates(candidates),
         report = {
@@ -827,9 +1083,7 @@ export async function runHardScan({
           scoreLabel: "Experimental CFQoE Score",
           scope: "run-relative",
           mode: "hard",
-          traversal: isLegacyState(state)
-            ? "legacy-range-sequential"
-            : "range-round-robin",
+          traversal: traversalForState(state),
           execution: "parallel-batched",
           runId: state.runId,
           startedAt: state.startedAt,
@@ -859,6 +1113,25 @@ export async function runHardScan({
             withStreaming: ranked.filter(
               (entry) => null !== entry.scores.streaming,
             ).length,
+            // Block-adaptive runs only: the legacy totals keep their
+            // exact shape (additive-only report changes, schema 10).
+            ...(engineOutcome
+              ? {
+                  probesSpent: engineOutcome.totals.probesSpent,
+                  primerProbes: engineOutcome.totals.primerProbes,
+                  expansionProbes: engineOutcome.totals.expansionProbes,
+                  reserveProbes: engineOutcome.totals.reserveProbes,
+                  blocksTotal: engineOutcome.totals.blocksTotal,
+                  blocksPrimed: engineOutcome.totals.blocksPrimed,
+                  blocksExpanded: engineOutcome.totals.blocksExpanded,
+                  blocksExhausted: engineOutcome.totals.blocksExhausted,
+                  blocksByTier: engineOutcome.totals.blocksByTier,
+                  blocksExtended: engineOutcome.totals.blocksExtended,
+                  suspectsServed: engineOutcome.totals.suspectsServed,
+                  blocksPromoted: engineOutcome.totals.blocksPromoted,
+                  blocksSplit: engineOutcome.totals.blocksSplit,
+                }
+              : {}),
           },
           results: ranked,
         },
@@ -888,6 +1161,7 @@ export async function runHardScan({
       candidates: finalCandidates,
       xrayInfo,
       canceled,
+      engineOutcome,
     });
   return (
     (state.lastReport = written.jsonPath),
