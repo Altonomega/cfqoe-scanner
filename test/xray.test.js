@@ -2,11 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildXrayConfig, describeXrayConfig } from '../src/xray/config.js';
 import { findFreePort, startXray } from '../src/xray/manager.js';
-import { locateXray, xrayFileName, xrayInstallHint } from '../src/platform/xray.js';
+import { locateXray, xrayInstallHint } from '../src/platform/xray.js';
 import { parseVlessUri } from '../src/config/vless.js';
 
 const FAKE_XRAY = fileURLToPath(new URL('./fixtures/fake-xray.js', import.meta.url));
@@ -68,18 +67,12 @@ test('startXray works with a fake xray implementation', async () => {
   const script = fs.readFileSync(FAKE_XRAY, 'utf8');
   assert.ok(script.includes('socks'));
 
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cfqoe-xray-'));
-  const wrapper = path.join(directory, xrayFileName());
-  fs.writeFileSync(
-    wrapper,
-    process.platform === 'win32'
-      ? `@echo off\r\nnode "${FAKE_XRAY}" %*\r\n`
-      : `#!/bin/sh\nexec "${process.execPath}" "${FAKE_XRAY}" "$@"\n`,
-    { mode: 0o700 },
-  );
-
+  // The fixture is a Node script, so it runs through the interpreter: the
+  // only form a shell-less spawn can execute on Windows, where neither a
+  // script nor a batch shim is a valid spawn target.
   const tunnel = await startXray({
-    xrayPath: wrapper,
+    xrayPath: process.execPath,
+    xrayArgs: [FAKE_XRAY],
     vless: VLESS,
     candidateIp: '104.16.0.9',
     startupTimeoutMs: 8000,
