@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/Altonomega/cfqoe-scanner/actions/workflows/ci.yml"><img src="https://github.com/Altonomega/cfqoe-scanner/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <img src="https://img.shields.io/badge/version-0.9.0-6b5b3e" alt="Version 0.9.0">
+  <img src="https://img.shields.io/badge/version-0.9.2-6b5b3e" alt="Version 0.9.2">
   <img src="https://img.shields.io/badge/node-%3E%3D20-4c7a3f" alt="Node.js 20 or newer">
   <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20Android%2FTermux-5a5344" alt="Windows, Linux, Android/Termux">
   <img src="https://img.shields.io/badge/license-source--available%20%C2%B7%20non--commercial-8a6d3b" alt="Source-available, non-commercial license">
@@ -18,7 +18,7 @@ It runs entirely on your own machine — Windows, Linux, or Android/Termux — w
 
 ## Screenshots
 
-The local web UI is the default surface since 0.9.0 — a dashboard ("plate"), the genome view of the whole catalog, live scan consoles, results, reports, settings, and diagnostics, in English and Persian (fully RTL).
+The local web UI is the default surface since 0.9.0 — a dashboard ("plate"), the genome view of the whole catalog, live scan consoles that narrate every phase as it happens, results, reports, settings, and diagnostics, in English and Persian (fully RTL).
 
 <!-- Screenshot captures land at these exact paths in a follow-up commit
      (docs/images/web-dashboard-en.png, docs/images/web-genome-fa.png);
@@ -66,7 +66,7 @@ Later runs: `cd ~/cfqoe-scanner && ./start-cfqoe.sh`. Full checklist: [docs/ANDR
 1. Launch the app — the web UI opens in your browser (if it doesn't, the sign-in address is printed in the terminal).
 2. Open **Config** and paste your VLESS + WebSocket link. It is stored as a protected local secret file, never transmitted anywhere.
 3. Run **System Check** to verify Node, Xray, and the stored configuration.
-4. Start with a **Quick Scan**, then read the ranking under **Results**.
+4. Start with a **Quick Scan** — the ranking appears on the scan page itself the moment the run finishes, and stays available under **Results**.
 5. Go wider with **Full**, deeper with **Research**, or read the whole catalog with **Hard Deep Scan**.
 
 The terminal menu remains available as an explicit fallback: `cfqoe menu`.
@@ -82,7 +82,7 @@ The terminal menu remains available as an explicit fallback: `cfqoe menu`.
 | **Research** | 240 | 6 | 24 | 8 × 3 | 6 segments | Slower, repeated evidence for defensible numbers |
 | **Hard Deep Scan** | the whole catalog | block-adaptive | pool ≤ 200 | as Full | 4 segments | Reads all 7,697 blocks; checkpointed and resumable |
 
-**Resume** continues an interrupted Hard Deep Scan from its checkpoint. A Hard run stops safely at any moment (`Q` or `Ctrl+C` in the terminal, Stop in the web UI): the checkpoint is saved as *paused*, the stop reason is recorded, and the results gathered so far are still written.
+**Resume** continues an interrupted Hard Deep Scan from its checkpoint. A Hard run stops safely at any moment (`Q` or `Ctrl+C` in the terminal, Stop in the web UI): the checkpoint is saved as *paused*, the stop reason is recorded, and the results gathered so far are still written. A resumed run keeps its original identity end to end — the same run id owns the log, the terminal state, and the report from the first leg to the last, so the finished report is always reachable under the run you resumed. Before you resume, the dashboard's resume line is read from the checkpoint itself: it names the phase the run stopped in and the probes it has already spent.
 
 *Desktop values shown; Android/Termux ships slightly smaller budgets (e.g. 12 SPRT finalists in Full, 3 streaming segments) — see Settings in the app.*
 
@@ -103,7 +103,7 @@ Quick, Full, and Research sample candidates from the catalog and enter the same 
 5. **Streaming** — a real HLS manifest is fetched and segments are downloaded **one at a time**, exactly like a player, under a byte cap (12 MiB desktop, 8 MiB Android), while a player buffer is simulated: only successful segments enter the playable buffer. P10 throughput is reported only with at least 29 samples.
 6. **Real Load** — sustained download and upload, idle vs. loaded latency, shaping ratio, fan-out, and requests per minute. Absolute gates cap the score; the default gate profile since 0.9.0 is `tolerant` (warn below 4 Mbps, fail below 1 Mbps sustained), with `balanced` and `strict` selectable.
 
-Before any of this, eligibility concurrency is **calibrated** against a control endpoint: the scanner steps concurrency up only while the failure rate stays close to the control's (a step is rejected when the failure rate grows by more than 0.10 over the control measurement).
+Before any of this, eligibility concurrency is **calibrated** against a control endpoint: the scanner steps concurrency up only while the failure rate stays close to the control's (a step is rejected when the failure rate grows by more than 0.10 over the control measurement). Calibration first hunts for a working control — up to 32 candidates, probed one by one — and reports that hunt's progress live, probe by probe. On a slow or filtered path every hunt probe can burn its full timeout, so this stage can take several minutes; the UI says so plainly instead of sitting silent. If no control answers, the scan continues at the requested concurrency and the report records why its numbers carry less certainty. Stopping during calibration ends it cleanly — the stop settles as soon as the one probe already in flight returns — and an aborted calibration leaves no verdict behind.
 
 The full method — statistics, buffer model, gate tables — is documented in [docs/METHODOLOGY.md](docs/METHODOLOGY.md) and [docs/MEASUREMENT-ENGINE.md](docs/MEASUREMENT-ENGINE.md).
 
@@ -131,7 +131,9 @@ The previous range round-robin traversal remains available as a per-user kill sw
 Running `cfqoe` with no arguments starts a local web server and opens the UI in your browser. The server is plain `node:http` — still zero dependencies — and it is a control surface, not a dashboard: every one of the terminal menu's twelve actions is there.
 
 - **Views:** Dashboard, Genome (all 7,697 blocks in catalog order, updating live), scan consoles for all four modes, Results, Reports, Settings (the full settings tree), VLESS Config, and Diagnostics.
-- **Live by design:** server-sent events stream block deltas in 250 ms batches, counters at 1 Hz, and phase/run-state changes immediately; a sequence gap is healed from a fresh snapshot.
+- **Live by design:** server-sent events stream block deltas in 250 ms batches, counters at 1 Hz, and phase/run-state changes immediately; a sequence gap is healed from a fresh snapshot. The consoles narrate the scan as it happens — the current operation, per-phase counters, and an event journal — and the header always shows the run's true state: when a run ends, its final state lands on every surface by itself, with no manual refresh.
+- **Results where the scan ends:** when a run finishes, its ranked table appears right on the scan page — ordering is fixed where the ranking is computed, complete measurements above partial ones, and the view never re-sorts. Every row carries its score parts (Web / Streaming / Load / Reliability) and opens a per-candidate detail ledger in English or Persian. The separate Results view keeps every run for later reading. A run in which nothing answered says so in a plain headline — how many candidates were tried, and that none responded — instead of presenting an empty page.
+- **Real data only:** there is no demo or simulated feed anywhere in the product. Every number on screen is measured by your scanner, live; if the scanner is unreachable, the UI shows a plain offline state with a retry — never invented data.
 - **Bilingual:** English and Persian with a language toggle; Persian is fully RTL — mirrored layout, right-aligned text, and Latin tokens (IPs, numbers) isolated so they never jumble. A subset of the Vazirmatn font ships with the app (SIL OFL 1.1), so Persian renders consistently even on a stock Windows or Android with no Persian font installed.
 - **Local-only security:** the server binds `127.0.0.1` only (port 8797, with an automatic fallback to a free port), guarded by a ≥128-bit session token held in memory only. Your VLESS config is handled **by reference**: the UI sees a descriptor (server, port, transport — never the UUID), and the link itself never appears in any response, error, or log.
 - **Terminal fallback:** `cfqoe menu` opens the classic terminal menu; every subcommand below also works headless for scripting and field tests.
@@ -163,7 +165,7 @@ With Real Load disabled the weights fall back to **45 / 40 / 15** (Web Transfer 
 
 ## Settings
 
-Settings live in `data/settings.json` (schema version 7) and are editable from the web UI, the terminal menu, or by hand — writes from the web UI go through the exact same migration and save path as the terminal's, byte for byte. The 0.9.0 defaults were audited against field logs; highlights:
+Settings live in `data/settings.json` (schema version 7) and are editable from the web UI, the terminal menu, or by hand — writes from the web UI go through the exact same migration and save path as the terminal's, byte for byte. A save the UI refuses is never silent about why: the refusal names the fields whose values are invalid, so a rejected save can be fixed instead of guessed at. The 0.9.0 defaults were audited against field logs; highlights:
 
 - **Concurrency** is calibrated per run (desktop ceiling 12, Android 6); the calibration tolerance is a 0.10 failure-rate increase over the control (the old 0.02 sat below the granularity of a single failed probe and pinned scans to concurrency 1).
 - **Real Load gate profile** defaults to `tolerant` — the `balanced` thresholds (warn 8 / fail 2 Mbps) sat above the measured path class entirely and made the top verdict unreachable.
@@ -179,7 +181,7 @@ Settings live in `data/settings.json` (schema version 7) and are editable from t
 | `data/settings.json` | Your settings (version 7) |
 | `data/config.secret.uri` | Your VLESS link — protected secret file (0600, or a restricted ACL on Windows) |
 | `data/block-reputation.json` | Cross-run Hard Scan block reputation |
-| `results/run-<id>.json` | Full report (schema 10) |
+| `results/run-<id>.json` | Full report (schema 10), stamped with the scan mode that produced it |
 | `results/latest.json` | The most recent report |
 | `results/best-ips.txt` | Plain-text ranking |
 | `results/hard-scan/` | Hard Scan checkpoints, retry queue, partial results |
