@@ -459,7 +459,14 @@ function countingTunnelRun({ fail }) {
   const xrayCopy = path.join(layout.root, 'fake-xray-counting.js');
   fs.copyFileSync(FAKE_XRAY_COUNTING, xrayCopy);
   fs.chmodSync(xrayCopy, 0o755);
-  const settings = makeTunnelSettings(xrayCopy, {
+  // The located "binary" is node itself and the fixture rides as its
+  // argument (startXray's xrayArgs seam, threaded through runHardScan):
+  // a script file cannot be spawned directly on Windows, where a
+  // shell-less spawn accepts only real executables — pointing xrayPath
+  // at the script made every start fail there before the fixture could
+  // record a single run (CI 0.9.0, all Windows legs: ENOENT on the
+  // count file below).
+  const settings = makeTunnelSettings(process.execPath, {
     engine: 'blocks',
     budgetProbes: 400,
   });
@@ -480,6 +487,7 @@ function countingTunnelRun({ fail }) {
         logger: silentLogger,
         runId: fail ? 'wiring-p4-failing' : 'wiring-p4-healthy',
         task: catalog.task,
+        xrayArgs: [xrayCopy],
       });
       const starts = fs
         .readFileSync(countFile, 'utf8')
