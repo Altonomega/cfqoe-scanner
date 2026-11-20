@@ -266,14 +266,14 @@ fa: {
   "ev.tunnel.backfill": "یک جای فینالیست خالی بود — کاندیدای بعدی جایش را می‌گیرد",
   "ev.accept": "یک فینالیست پذیرفته شد", "ev.reject": "یک فینالیست رد شد", "ev.inconclusive": "یک فینالیست نامشخص ماند — شواهد غربالش تصمیم می‌گیرد",
   "ev.stage": "{stage} · {ip}", "ev.runComplete": "اجرا کامل شد — {n} آی‌پی واجد شرایط.",
-  "ev.runStopped": "اجرا متوقف شد — پیشرفت ذخیره شد.", "ev.runFailed": "اجرا ناموفق بود — برای لاگ به عیب‌یابی بروید.",
+  "ev.runStopped": "اجرا متوقف شد — پیشرفت ذخیره شد.", "ev.runFailed": "اجرا ناموفق بود — لاگ را در عیب‌یابی ببینید.",
   "ev.verifying": "راستی‌آزمایی فینالیست‌ها", "ev.verifyingDecision": "راستی‌آزمایی فینالیست‌ها — {decision}",
   "ev.phaseComplete": "{phase} کامل شد", "ev.primerAborted.dead-path": "پرایمر متوقف شد — مسیر هیچ پاسخی نمی‌دهد",
   "ev.primerAborted.hard-error": "پرایمر متوقف شد — خطای موتور آن را متوقف کرد",
-  "ev.concurrency": "هم‌زمانی {n} انتخاب شد", "ev.delayedRetryNote": "تلاش مجدد با تأخیر برای خطاهای گذرا",
-  "ev.finalRanking": "رتبه‌بندی نهایی کیفیت", "ev.splitCoverage": "گذر پوشش شکاف کامل شد — {n} پروب ذخیره مصرف شد",
+  "ev.concurrency": "سطح هم‌روندی {n} انتخاب شد", "ev.delayedRetryNote": "تلاش مجدد با تأخیر برای خطاهای گذرا",
+  "ev.finalRanking": "رتبه‌بندی نهایی کیفیت", "ev.splitCoverage": "گذر پوشش شکافت کامل شد — {n} پروب ذخیره مصرف شد",
   "ev.expansionWave": "موج گسترش کامل شد — {n} پروب گسترش مصرف شد",
-  "ev.primerPlan": "{blocks} بلوک · رد {skip} · تأیید {confirm} · کامل {full}",
+  "ev.primerPlan": "{blocks} بلوک · پرش {skip} · تأیید {confirm} · کامل {full}",
   "phase.screening": "غربال", "phase.delayed-retry": "تلاش مجدد با تأخیر", "phase.verification": "راستی‌آزمایی (SPRT)",
   "phase.tunnel": "سنجش کیفیت تونل", "phase.calibrating": "کالیبراسیون",
   "phase.hard-primer": "پرایمرها — نقاط آغاز همانندسازی", "phase.hard-coverage": "تصحیح — بررسی بلاک‌های ناهموار",
@@ -478,7 +478,7 @@ const app = {
     // carry that run as "running"; the terminal run-state event is
     // newer truth for the same runId and wins (backend truth is the
     // terminal status the state store now also serves at rest, so
-    // this guard only ever fires on the in-flight race).
+    // this guard only fires on the in-flight race).
     if (s.run && s.run.status === "running" && s.run.runId === this.runId && ["complete", "canceled", "failed", "paused-done"].includes(this.runStatus)) s.run = { ...s.run, status: this.runStatus };
     if (s.run) { this.runStatus = s.run.status; this.runMode = s.run.mode; this.runId = s.run.runId; this.phase = s.run.phase; this.counters = s.run.counters || {}; if (s.run.error) this.runError = s.run.error; if (s.run.status === "running") this.runError = null; const started = Date.parse(s.run.startedAt); if (Number.isFinite(started)) this.runStartedAtMs = started; }
     else { this.runStatus = s.status && s.status.resumeAvailable ? "paused-done" : this.runStatus === "complete" ? "complete" : "idle"; if (this.runStatus !== "running") this.stopping = false; }
@@ -528,7 +528,7 @@ const app = {
   },
   // Elapsed time is read off the local clock, never off the last
   // counters frame: a quiet phase emits nothing for stretches, and a
-  // frozen clock is exactly what makes a live run look dead.
+  // frozen clock is what makes a live run look dead.
   elapsedMs() { return this.runStartedAtMs ? Math.max(0, Date.now() - this.runStartedAtMs) : (this.counters.elapsedMs || 0); },
   refreshChrome(force) {
     // Chrome is a summary, not a counter: events arrive per probe, so
