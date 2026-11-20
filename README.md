@@ -21,7 +21,7 @@ CFQoE Scanner روی **Windows، Linux و Android/Termux** اجرا می‌شو�
 - تفکیک خطای سخت و نرم + صف retry تأخیری
 - ثبت POP کلودفلر (`cf-ray`)
 - استریم با rendition ثابت هدف یا حالت محافظه‌کارانه `lowest` (بدون ادعای ABR کامل)
-- گزارش JSON (schema 9)، رتبه‌بندی متنی و لاگ ساخت‌یافته
+- گزارش JSON (schema 10)، رتبه‌بندی متنی و لاگ ساخت‌یافته
 - محافظت محلی از URI و حذف اطلاعات حساس از گزارش‌ها
 
 ---
@@ -110,7 +110,7 @@ cd ~/cfqoe-scanner
 - **Quick** فقط screening است.
 - **Full** حالت پیش‌فرض روزمره است.
 - **Research** برای اندازه‌گیری دقیق‌تر و طولانی‌تر است.
-- **Hard** کل catalog را range round-robin پیمایش می‌کند، checkpoint می‌سازد و با `Q` یا `Ctrl+C` امن متوقف می‌شود.
+- **Hard** کل catalog را به‌صورت block-adaptive پیمایش می‌کند (واحد بلوک ‎/24‎؛ موتور legacy ‏range round-robin با کلید `hard.engine` در تنظیمات قابل انتخاب است)، checkpoint می‌سازد و با `Q` یا `Ctrl+C` امن متوقف می‌شود.
 
 Hard Scan همچنین خطاهای گذرا را در صف retry نگه می‌دارد، finalistها را با SPRT تأیید می‌کند و از checkpoint قبلی ادامه می‌دهد.
 
@@ -172,7 +172,7 @@ manifest واقعی HLS خوانده می‌شود و `EXT-X-MAP`، `EXT-X-KEY`�
 ```text
 data/settings.json              تنظیمات کاربر (version 7)
 data/config.secret.uri          کانفیگ محافظت‌شده
-results/run-<id>.json           گزارش کامل (schema 9)
+results/run-<id>.json           گزارش کامل (schema 10)
 results/latest.json             آخرین گزارش
 results/best-ips.txt            رتبه‌بندی متنی
 results/hard-scan/*             checkpoint، صف retry و partial results
