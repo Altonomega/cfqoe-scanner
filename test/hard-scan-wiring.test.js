@@ -60,6 +60,9 @@ const FAKE_XRAY = fileURLToPath(new URL('./fixtures/fake-xray.js', import.meta.u
 const FAKE_XRAY_DEAD = fileURLToPath(
   new URL('./fixtures/fake-xray-dead.js', import.meta.url),
 );
+const FAKE_XRAY_COUNTING = fileURLToPath(
+  new URL('./fixtures/fake-xray-counting.js', import.meta.url),
+);
 const WORKLOADS_CATALOG = fileURLToPath(
   new URL('../config/workloads.default.json', import.meta.url),
 );
@@ -435,5 +438,98 @@ test(
     assert.equal(tested.length, 2);
     const finalize = events.filter((event) => 'hard-finalize' === event.phase);
     assert.equal(Math.max(...finalize.map((event) => event.total)), 2);
+  },
+);
+
+// P-4 launch pinning: the counting fixture records one line per `run`
+// invocation (the candidate IP from the generated config), so the
+// session-per-candidate contract is asserted on process starts, not on
+// log text. The healthy run disables every stage (as in the idle test
+// above) so its rounds turn on session handling alone — fast, and no
+// probe traffic. The failing run enables browsing: with no stage
+// enabled an attempt counts as scored vacuously (hasScoredTunnelStage)
+// and even a dead-Xray candidate would burn its slot, while a required
+// stage makes the failed attempt genuinely unscored so backfill
+// promotes the next candidate. The dead fixture throws at startXray,
+// before any probe could run, so enabling the stage costs no traffic.
+function countingTunnelRun({ fail }) {
+  const layout = tunnelLayout(RANGES);
+  // The fixture is not executable in the repo tree; run a copy.
+  const xrayCopy = path.join(layout.root, 'fake-xray-counting.js');
+  fs.copyFileSync(FAKE_XRAY_COUNTING, xrayCopy);
+  fs.chmodSync(xrayCopy, 0o755);
+  const settings = makeTunnelSettings(xrayCopy, {
+    engine: 'blocks',
+    budgetProbes: 400,
+  });
+  settings.tunnel.limit = 1;
+  settings.tunnel.rounds = 2;
+  settings.browsing.enabled = fail;
+  settings.streaming.enabled = false;
+  const countFile = path.join(layout.root, 'xray-runs.ndjson');
+  const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
+  return (async () => {
+    process.env.FAKE_XRAY_COUNT_FILE = countFile;
+    if (fail) process.env.FAKE_XRAY_COUNT_FAIL = '1';
+    try {
+      const result = await runHardScan({
+        vlessUri: VLESS_URI,
+        settings,
+        layout,
+        logger: silentLogger,
+        runId: fail ? 'wiring-p4-failing' : 'wiring-p4-healthy',
+        task: catalog.task,
+      });
+      const starts = fs
+        .readFileSync(countFile, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim());
+      return { result, starts };
+    } finally {
+      delete process.env.FAKE_XRAY_COUNT_FILE;
+      delete process.env.FAKE_XRAY_COUNT_FAIL;
+    }
+  })();
+}
+
+test(
+  'finalize tunnel sessions (P-4): one Xray start serves every round of a healthy candidate',
+  { timeout: 60000 },
+  async () => {
+    const { result, starts } = await countingTunnelRun({ fail: false });
+    assert.equal(result.canceled, false);
+    const tested = result.report.results.filter(
+      (row) => row.selection?.tunnelTested,
+    );
+    // Limit 1 and the attempt scores (no stage enabled), so exactly one
+    // candidate is measured — over 2 rounds, with a single start.
+    assert.equal(tested.length, 1);
+    assert.deepEqual(starts, [tested[0].ip]);
+  },
+);
+
+test(
+  'finalize tunnel sessions (P-4): a failed round discards the session — the next round starts fresh',
+  { timeout: 60000 },
+  async () => {
+    const { result, starts } = await countingTunnelRun({ fail: true });
+    assert.equal(result.canceled, false);
+    const tested = result.report.results.filter(
+      (row) => row.selection?.tunnelTested,
+    );
+    // No attempt scores, so backfill spends the whole 2x attempt budget
+    // (2 candidates at limit 1). Every start fails, so each candidate's
+    // second round must invoke `run` again instead of reusing the dead
+    // session: exactly 2 starts per candidate, 4 in total.
+    assert.equal(tested.length, 2);
+    assert.equal(starts.length, 4);
+    const perCandidate = new Map();
+    for (const ip of starts)
+      perCandidate.set(ip, (perCandidate.get(ip) ?? 0) + 1);
+    assert.deepEqual(
+      [...perCandidate.keys()].sort(),
+      tested.map((row) => row.ip).sort(),
+    );
+    assert.deepEqual([...perCandidate.values()].sort(), [2, 2]);
   },
 );
