@@ -18,6 +18,7 @@ import {
   runEligibilityBatch,
   runAdaptiveEligibilityBatch,
   selectDelayedRetries,
+  selectRecheckFinalists,
 } from "./hard-scheduler.js";
 import { probeWebsocket } from "./probe/websocket.js";
 import { startXray } from "./xray/manager.js";
@@ -273,6 +274,9 @@ async function runDelayedRetries({
   let recovered = 0;
   const results = await runEligibilityBatch({
     candidates: retryCandidates,
+    // Cross-section read, deliberately: Hard has no retry-rounds key of
+    // its own — the delayed-retry batch reuses scan.rounds (clamped to
+    // 2..16), the screening depth the shared pipeline runs at.
     rounds: clampInt(settings.scan.rounds, 2, 16),
     concurrency,
     minimumSuccessRate: settings.scan.minimumSuccessRate,
@@ -475,7 +479,9 @@ export async function runHardScan({
     calibrationCandidates = sampleCandidates({
       ranges,
       perRange: 1,
-      max: Math.max(4, requestedConcurrency),
+      // The control hunt probes up to 32 candidates (scan-calibration);
+      // the pool must be at least that deep or the cap is fiction here.
+      max: Math.max(32, requestedConcurrency),
       seed: 404,
     }),
     calibration = await calibrateWebsocketConcurrency({
@@ -520,6 +526,13 @@ export async function runHardScan({
     controlIp: calibration.controlIp ?? null,
     levels: calibration.levels,
   });
+  // Same no-control warning as the Full path: calibration no-ops and the
+  // sweep runs at the requested concurrency unmeasured.
+  if ("no_working_control" === calibration.reason)
+    logger.warn("hard.calibration.no_control", {
+      requestedConcurrency: calibration.requestedConcurrency,
+      controlProbes: calibration.controlProbes ?? null,
+    });
   const concurrency = calibration.selectedConcurrency,
     screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5),
     blocksEngine = isBlocksState(state);
@@ -748,6 +761,7 @@ export async function runHardScan({
       if (settings.hard.delayedRetry)
         for (const retry of selectDelayedRetries(results, {
           maxRetries: concurrency,
+          minimumSuccessRate: settings.scan.minimumSuccessRate,
         }))
           (appendJsonLine(state.files.retryFile, {
             ip: retry.ip,
@@ -839,8 +853,15 @@ export async function runHardScan({
         clampInt(settings.hard.recheckTop, 20, 200),
       );
       if (0 === count) return candidates;
-      const finalists = candidates
-          .slice(0, count)
+      // The recheck budget is spent under the per-block diversity cap
+      // (hard.recheckPerBlock): at most that many finalists from any one
+      // catalog block are re-verified, and the walk continues deeper
+      // into the list so a single hot /24 cannot crowd out the rest of
+      // the catalog's finalists.
+      const finalists = selectRecheckFinalists(candidates, {
+          limit: count,
+          perBlock: clampInt(settings.hard.recheckPerBlock, 4, 200),
+        })
           .map((entry) => ({
             ip: entry.ip,
             range: entry.range,
@@ -975,8 +996,6 @@ export async function runHardScan({
         finalists = candidates
           .filter(
             (entry) =>
-              (entry.eligibility.confidence95?.lower ??
-                entry.eligibility.successRate) >= 0 &&
               entry.eligibility.successRate >= settings.scan.minimumSuccessRate,
           )
           .slice(0, settings.tunnel.limit),
@@ -994,10 +1013,12 @@ export async function runHardScan({
         const browsingResults = [],
           streamingResults = [],
           loadResults = [];
+        // One Xray session per candidate across rounds, as in the Full
+        // path: restart only when a round fails (see scan.js).
+        let xrayHandle = null;
         for (let round = 1; round <= settings.tunnel.rounds; round += 1) {
-          let xrayHandle = null;
           try {
-            xrayHandle = await startXray({
+            xrayHandle ??= await startXray({
               xrayPath: located.path,
               vless,
               candidateIp: candidate.ip,
@@ -1087,8 +1108,8 @@ export async function runHardScan({
               round,
               error: error.message,
             });
-          } finally {
             await xrayHandle?.stop();
+            xrayHandle = null;
           }
           ((completed += 1),
             onProgress({
@@ -1101,6 +1122,7 @@ export async function runHardScan({
               note: candidate.ip,
             }));
         }
+        await xrayHandle?.stop();
         tunnelResults.set(candidate.ip, {
           browsing: browsingResults,
           streaming: streamingResults,

@@ -12,6 +12,7 @@ import {
   runEligibilityBatch,
   runAdaptiveEligibilityBatch,
   selectDelayedRetries,
+  orderForTunnelSelection,
 } from "./hard-scheduler.js";
 import { probeBrowsing } from "./browsing/probe.js";
 import { probeStreaming } from "./streaming/probe.js";
@@ -78,6 +79,7 @@ export async function runScan({
       calibration: effectiveSettings.calibration,
       requestedConcurrency: effectiveSettings.scan.concurrency,
       timeoutMs: effectiveSettings.scan.timeoutMs,
+      seed,
     });
   effectiveSettings = {
     ...effectiveSettings,
@@ -104,6 +106,14 @@ export async function runScan({
     controlIp: calibration.controlIp ?? null,
     levels: calibration.levels,
   });
+  // A no-control outcome means calibration silently no-ops and the scan
+  // runs at the requested concurrency unmeasured — on exactly the
+  // filtered paths that most needed measuring. Surface it at warn.
+  if ("no_working_control" === calibration.reason)
+    logger.warn("scan.calibration.no_control", {
+      requestedConcurrency: calibration.requestedConcurrency,
+      controlProbes: calibration.controlProbes ?? null,
+    });
   logger.info("scan.start", {
     runId,
     target,
@@ -144,7 +154,11 @@ export async function runScan({
         candidate: result.item,
         observations: result.observations,
       })),
-      { maxRetries: effectiveSettings.scan.delayedRetry.maxCandidates },
+      {
+        maxRetries: effectiveSettings.scan.delayedRetry.maxCandidates,
+        minimumSuccessRate: effectiveSettings.scan.minimumSuccessRate,
+        singleProbe: true,
+      },
     );
     if (retryCandidates.length) {
       logger.info("scan.delayed_retry.start", {
@@ -269,7 +283,20 @@ export async function runScan({
               kind: "streaming",
             })
           : [],
-        tunnelCandidates = eligible.slice(0, effectiveSettings.tunnel.limit);
+        // Slots are dealt in post-verification order (accepted, then
+        // inconclusive, then screening-only), not the screening order
+        // `eligible` arrives in — a finalist SPRT accepted after ranking
+        // 6th on screening evidence must not lose its slot to an
+        // inconclusive finalist that ranked 3rd.
+        tunnelCandidates = orderForTunnelSelection(eligible, {
+          decisionByIp: decisionsByIp,
+          verificationRateByIp: new Map(
+            [...verificationByIp].map(([ip, observations]) => [
+              ip,
+              successRate(observations),
+            ]),
+          ),
+        }).slice(0, effectiveSettings.tunnel.limit);
       let completedCount = 0;
       const totalCount =
         tunnelCandidates.length * effectiveSettings.tunnel.rounds;
@@ -282,14 +309,20 @@ export async function runScan({
         const browsingResults = [],
           streamingResults = [],
           loadResults = [];
+        // One Xray session per candidate serves every round: the rounds
+        // are measurement repetitions, and a per-round restart paid a
+        // fresh process startup — and its failure surface — for each
+        // (Research ran 24 launches per run). A failed round stops the
+        // session, so the next round starts a fresh one; a healthy
+        // session is stopped once, after the final round.
+        let xrayHandle = null;
         for (
           let round = 1;
           round <= effectiveSettings.tunnel.rounds;
           round += 1
         ) {
-          let xrayHandle = null;
           try {
-            xrayHandle = await startXray({
+            xrayHandle ??= await startXray({
               xrayPath: xrayLocation.path,
               vless,
               candidateIp: candidate.ip,
@@ -434,8 +467,10 @@ export async function runScan({
               round,
               error: error.message,
             });
-          } finally {
+            // A session that failed a round is not reused: stop it and
+            // let the next round start a fresh one.
             await xrayHandle?.stop();
+            xrayHandle = null;
           }
           completedCount += 1;
           emitProgress({
@@ -445,6 +480,7 @@ export async function runScan({
             ip: candidate.ip,
           });
         }
+        await xrayHandle?.stop();
         tunnelByIp.set(candidate.ip, {
           browsing: browsingResults,
           streaming: streamingResults,
