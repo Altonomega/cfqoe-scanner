@@ -102,6 +102,7 @@ a:hover { text-decoration: underline; }
   font: 12.5px var(--sans); color: var(--ink); background: var(--plate);
   border: 1px solid var(--ink-40); border-radius: 6px; padding: 6px 12px;
   cursor: pointer; transition: background 160ms var(--ease), border-color 160ms var(--ease);
+  user-select: none; -webkit-user-select: none;
 }
 .btn:hover { border-color: var(--ink); }
 .btn:disabled { opacity: 0.45; cursor: default; }

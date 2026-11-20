@@ -491,6 +491,7 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
   let tickerLines = [];
   let tickerWindow = [];
   let attachedLogger = null;
+  let lastLogger = null;
   let unsubscribeLogger = null;
   let latestCache = { key: null, value: null };
   let blockTimer = null;
@@ -727,8 +728,9 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
           { status: view ? view.status : "idle", mode: view?.mode ?? null, runId: view?.runId ?? null },
           peekSeq(),
         );
-        if (client.wantsTail && attachedLogger) {
-          for (const record of attachedLogger.recent(LOG_REPLAY_LIMIT)) {
+        const replay = attachedLogger ?? lastLogger;
+        if (client.wantsTail && replay) {
+          for (const record of replay.recent(LOG_REPLAY_LIMIT)) {
             client.send("log", logPayload(record), peekSeq());
           }
         }
@@ -746,11 +748,18 @@ export function createWebState({ layout, startedAt = new Date().toISOString() })
     attachLogger(logger) {
       if (unsubscribeLogger) unsubscribeLogger();
       attachedLogger = logger;
+      lastLogger = null;
       unsubscribeLogger = logger.subscribe((record) => queueLog(record), { minLevel: "debug" });
     },
     detachLogger() {
       if (unsubscribeLogger) unsubscribeLogger();
       unsubscribeLogger = null;
+      // The logger's ring survives its close, so keep the finished
+      // run's logger as the replay source: a view opened after the
+      // run ended must still backfill its records — the log file
+      // exists, and an empty tail would misreport the run as
+      // unlogged. The next run's attach supersedes it.
+      if (attachedLogger) lastLogger = attachedLogger;
       attachedLogger = null;
     },
     beginRun({ mode, runId, settings }) {
