@@ -3,7 +3,8 @@
 // §2.1). The engine orchestrates only: it builds per-block run state over a
 // block plan (candidate/blocks.js), lets cross-run reputation
 // (hard-reputation.js) set each block's primer depth, runs the primer phase
-// (§3), then expansion waves allocated by the pure bandit policy
+// (§3), then the split-coverage pass (docs/HARD-SCAN-5B-ANALYSIS.md §6),
+// then expansion waves allocated by the pure bandit policy
 // (measurement/bandit.js, §4) with heterogeneity splits (§5), and assembles
 // the finalist pool (§6.1). Statistics live in bandit.js, block geometry in
 // blocks.js, persistence in hard-reputation.js — none of that logic is
@@ -24,10 +25,16 @@
 // deterministic: same seed + same probe outcomes => identical traversal,
 // because allocation is a pure function of the per-block counters and all
 // iteration follows plan order.
-import { blockCandidate, splitBlock } from './candidate/blocks.js';
+import {
+  blockCandidate,
+  blockHalfCandidate,
+  splitBlock,
+} from './candidate/blocks.js';
 import {
   allocateWave,
+  DEFAULT_SPLIT_MIN_HALF_ATTEMPTS,
   evaluateMarginalGain,
+  fisherExactTwoSided,
   isBudgetExhausted,
   rankBlocks,
   shouldSplitBlock,
@@ -59,6 +66,14 @@ const DEAD_PATH_MAX_SUCCESS_RATE = 0.005;
 // A block needs at least this many usable addresses before a split can
 // leave both children with statistically meaningful halves (spec §5.2).
 const SPLIT_MIN_USABLE = 32;
+// Split-coverage pass stage targets (5b analysis §6), all derived from
+// the split trigger's half minimum so the pass and the trigger can
+// never drift apart: step E tops a 0-success block's less-observed half
+// up to half the trigger depth, stage 1 guarantees the trigger depth
+// in both halves, stage 2 doubles it for near-miss suspects.
+const HALF_TRIGGER_ATTEMPTS = DEFAULT_SPLIT_MIN_HALF_ATTEMPTS;
+const EXTENSION_HALF_ATTEMPTS = HALF_TRIGGER_ATTEMPTS / 2;
+const DEEP_HALF_ATTEMPTS = 2 * HALF_TRIGGER_ATTEMPTS;
 
 function positiveInt(value, fallback = 1) {
   const parsed = Math.floor(Number(value));
@@ -124,11 +139,21 @@ function createBlockState(block, blockIndex, { prior, tier, hard }) {
     runSuccesses: 0,
     probed: 0,
     orderCursor: 0,
+    halfCursors: { lower: 0, upper: 0 },
     probedAddresses: new Set(),
     halves: emptyHalves(),
     tier,
     primerTarget: primerTargetForTier(tier, block, hard),
     primerDone: 0,
+    // Successes the run's own primer produced (tracked explicitly, not
+    // re-derived from run totals: the split-coverage pass classifies
+    // blocks by it, and expansion successes must not rewrite history).
+    primerSuccesses: 0,
+    // Split-coverage pass progress for this block: 0 untouched, 1 step
+    // E settled, 2 stage 1 settled, 3 pass complete. Persisted so a
+    // resumed run never re-spends the pass on a settled block.
+    passStage: 0,
+    extensionCounted: false,
     hardDead: false,
     addressesExhausted: false,
     retired: false,
@@ -147,6 +172,10 @@ function serializeBlockState(allStates, totals) {
       probesSpent: totals.probesSpent,
       primerProbes: totals.primerProbes,
       expansionProbes: totals.expansionProbes,
+      reserveProbes: totals.reserveProbes,
+      blocksExtended: totals.blocksExtended,
+      suspectsServed: totals.suspectsServed,
+      blocksPromoted: totals.blocksPromoted,
       tested: totals.tested,
       eligible: totals.eligible,
       failed: totals.failed,
@@ -162,11 +191,15 @@ function serializeBlockState(allStates, totals) {
       runSuccesses: state.runSuccesses,
       probed: state.probed,
       orderCursor: state.orderCursor,
+      halfCursors: { ...state.halfCursors },
       probedAddresses: [...state.probedAddresses],
       halves: { ...state.halves },
       tier: state.tier,
       primerTarget: state.primerTarget,
       primerDone: state.primerDone,
+      primerSuccesses: state.primerSuccesses,
+      passStage: state.passStage,
+      extensionCounted: state.extensionCounted,
       hardDead: state.hardDead,
       addressesExhausted: state.addressesExhausted,
       retired: state.retired,
@@ -233,6 +266,10 @@ export async function runBlockScreening({
     probesSpent: 0,
     primerProbes: 0,
     expansionProbes: 0,
+    reserveProbes: 0,
+    blocksExtended: 0,
+    suspectsServed: 0,
+    blocksPromoted: 0,
     tested: 0,
     eligible: 0,
     failed: 0,
@@ -245,6 +282,21 @@ export async function runBlockScreening({
     statesByIndex.set(state.blockIndex, state);
   }
 
+  // Saves written before the split-coverage pass existed carry no
+  // primerSuccesses; a block's primer records are the first primerDone
+  // entries in its insertion-ordered record list, so the count rebuilds
+  // exactly from what the save does carry.
+  function savedPrimerSuccesses(entry) {
+    let successes = 0;
+    const records = entry.records ?? [];
+    for (const saved of records.slice(0, entry.primerDone ?? 0)) {
+      for (const observation of saved.observations ?? []) {
+        if (observation.ok) successes += 1;
+      }
+    }
+    return successes;
+  }
+
   function applySavedEntry(state, entry) {
     state.priorAttempts = entry.priorAttempts ?? state.priorAttempts;
     state.priorSuccesses = entry.priorSuccesses ?? state.priorSuccesses;
@@ -252,11 +304,15 @@ export async function runBlockScreening({
     state.runSuccesses = entry.runSuccesses ?? 0;
     state.probed = entry.probed ?? 0;
     state.orderCursor = entry.orderCursor ?? 0;
+    state.halfCursors = { lower: 0, upper: 0, ...(entry.halfCursors ?? {}) };
     state.probedAddresses = new Set(entry.probedAddresses ?? []);
     state.halves = { ...emptyHalves(), ...(entry.halves ?? {}) };
     state.tier = entry.tier ?? state.tier;
     state.primerTarget = entry.primerTarget ?? state.primerTarget;
     state.primerDone = entry.primerDone ?? 0;
+    state.primerSuccesses = entry.primerSuccesses ?? savedPrimerSuccesses(entry);
+    state.passStage = entry.passStage ?? 0;
+    state.extensionCounted = Boolean(entry.extensionCounted);
     state.hardDead = Boolean(entry.hardDead);
     state.addressesExhausted = Boolean(entry.addressesExhausted);
     state.children = entry.children ?? null;
@@ -282,7 +338,7 @@ export async function runBlockScreening({
   function restoreBlockState(saved) {
     if (!saved || !Array.isArray(saved.blocks)) return;
     if (saved.totals) {
-      for (const key of ['probesSpent', 'primerProbes', 'expansionProbes', 'tested', 'eligible', 'failed']) {
+      for (const key of ['probesSpent', 'primerProbes', 'expansionProbes', 'reserveProbes', 'blocksExtended', 'suspectsServed', 'blocksPromoted', 'tested', 'eligible', 'failed']) {
         if (Number.isFinite(saved.totals[key])) totals[key] = saved.totals[key];
       }
     }
@@ -296,6 +352,15 @@ export async function runBlockScreening({
       .filter((entry) => entry.parentBlockId && !rootIds.has(entry.blockId))
       .sort((left, right) => (left.splitDepth ?? 0) - (right.splitDepth ?? 0));
     for (const entry of childEntries) {
+      // A split's children are all registered when the first child's
+      // entry derives them from the parent; a later sibling entry then
+      // finds its state already present and only needs its own saved
+      // counters applied — skipping it would silently zero the block.
+      const existing = allStates.find((state) => state.blockId === entry.blockId);
+      if (existing) {
+        applySavedEntry(existing, entry);
+        continue;
+      }
       const parent = allStates.find((state) => state.blockId === entry.parentBlockId);
       if (!parent || parent.retired) continue;
       const derived = splitBlock(parent.block, { maxSplitDepth: entry.splitDepth ?? 1 });
@@ -363,6 +428,33 @@ export async function runBlockScreening({
     return drawn;
   }
 
+  // Draws the next `count` unprobed candidates from one half's own
+  // seeded stream (the split-coverage pass's step E). The half cursor
+  // is independent of the main order cursor; addresses the block has
+  // already probed — through either stream — are skipped, so a block
+  // never re-probes an address.
+  function drawHalfCandidates(state, half, count) {
+    const cap = depthCapFor(state.block, hard);
+    const drawn = [];
+    while (drawn.length < count && state.probed + drawn.length < cap) {
+      const candidate = blockHalfCandidate(
+        state.block,
+        half,
+        state.halfCursors[half],
+        seed,
+      );
+      if (!candidate) break;
+      state.halfCursors[half] += 1;
+      const address = state.block.base + candidate.hostOffset;
+      if (state.probedAddresses.has(address)) continue;
+      state.probedAddresses.add(address);
+      candidate.blockIndex = state.blockIndex;
+      drawn.push(candidate);
+    }
+    state.probed += drawn.length;
+    return drawn;
+  }
+
   function trackPrimerObservation(observation) {
     valve.observations += 1;
     if (observation.ok) valve.successes += 1;
@@ -411,6 +503,7 @@ export async function runBlockScreening({
     }
     state.runAttempts += observations.length;
     state.runSuccesses += successes;
+    if (phase === 'primer') state.primerSuccesses += successes;
     totals.tested += 1;
     if (summary.eligibility.successRate >= minimumSuccessRate) {
       totals.eligible += 1;
@@ -549,6 +642,201 @@ export async function runBlockScreening({
       settlePrimerStates();
       if (budgetRemaining() <= 0) break;
     }
+  }
+
+  // --- Split-coverage pass (5b analysis §6) ----------------------------------
+  // Between the primer and UCB expansion, a bounded reserve guarantees
+  // split-trigger depth to the blocks the primer flags. The split
+  // signal lives exclusively in the per-half counters, and a
+  // heterogeneous block's totals are indistinguishable from a
+  // homogeneous mid block's, so pure index order cannot route probes
+  // to it — measured on Map D, no 0/3 block was ever served and barely
+  // a quarter of the catalog reached trigger depth. The pass iterates
+  // root blocks in primer-sweep order (split children join expansion
+  // normally and are never pass subjects), spends at most
+  // splitReserveFraction of the post-primer headroom, and leaves
+  // unserved suspects to UCB — graceful, stratified, deterministic.
+  // The slice derives from primerProbes (a restored counter), never
+  // from current spend, so a resumed run faces the identical slice.
+  function reserveSlice() {
+    const headroom = Math.max(0, hard.budgetProbes - totals.primerProbes);
+    return Math.floor(hard.splitReserveFraction * headroom);
+  }
+
+  function lessObservedHalf(state) {
+    return state.halves.lowerAttempts <= state.halves.upperAttempts
+      ? 'lower'
+      : 'upper';
+  }
+
+  // Spends reserve probes until `half` reaches `target` attempts,
+  // drawing from the half's own stream (step E). Returns probes spent.
+  async function extendHalf(state, half, target) {
+    let spent = 0;
+    while (
+      !isCanceled() && !valve.aborted
+      && state.halves[`${half}Attempts`] < target
+    ) {
+      if (budgetRemaining() <= 0) break;
+      const needed = target - state.halves[`${half}Attempts`];
+      const drawn = drawHalfCandidates(
+        state,
+        half,
+        Math.min(needed, workerConcurrency),
+      );
+      if (!drawn.length) break;
+      totals.reserveProbes += drawn.length;
+      totals.probesSpent += drawn.length;
+      spent += drawn.length;
+      await probeChunk(drawn, 'coverage');
+    }
+    return spent;
+  }
+
+  // Spends reserve probes until both halves reach `target` attempts,
+  // drawing from the block's main permutation (stages 1–2). Returns
+  // probes spent.
+  async function balanceHalves(state, target) {
+    let spent = 0;
+    while (
+      !isCanceled() && !valve.aborted
+      && (state.halves.lowerAttempts < target
+        || state.halves.upperAttempts < target)
+    ) {
+      if (budgetRemaining() <= 0) break;
+      const deficit = Math.max(0, target - state.halves.lowerAttempts)
+        + Math.max(0, target - state.halves.upperAttempts);
+      const drawn = drawCandidates(
+        state,
+        Math.min(deficit, workerConcurrency),
+      );
+      if (!drawn.length) break;
+      totals.reserveProbes += drawn.length;
+      totals.probesSpent += drawn.length;
+      spent += drawn.length;
+      await probeChunk(drawn, 'coverage');
+    }
+    return spent;
+  }
+
+  // A stage is settled when its target is reached, or when it spent
+  // nothing while budget remained and the run was not interrupted —
+  // the draws themselves are impossible (depth cap, exhausted halves),
+  // so no resume could serve the block further either.
+  function stageSettled(state, target, spent) {
+    if (
+      state.halves.lowerAttempts >= target
+      && state.halves.upperAttempts >= target
+    ) return true;
+    return spent === 0 && budgetRemaining() > 0 && !isCanceled() && !valve.aborted;
+  }
+
+  async function runSplitCoveragePass() {
+    const slice = reserveSlice();
+    const sliceSpent = () => totals.reserveProbes >= slice;
+    for (const state of primerSweepOrder()) {
+      if (isCanceled() || valve.aborted || budgetRemaining() <= 0) break;
+      if (state.retired || state.hardDead || state.passStage >= 3) continue;
+      if (state.primerDone === 0) {
+        // The primer never ran for this block (skip tier, or the sweep
+        // never reached it): there is no run evidence to extend, and
+        // reputation already speaks for skip-tier blocks.
+        state.passStage = 3;
+        continue;
+      }
+
+      // Step E — half-coverage extension for 0-success primers, the
+      // class UCB starves by construction. The less-observed half is
+      // the hot half in ≈95% of cases (the cold half produced the
+      // shutout); any success promotes the block to suspect.
+      if (state.passStage < 1) {
+        if (sliceSpent()) break;
+        if (state.primerSuccesses === 0) {
+          const half = lessObservedHalf(state);
+          const wasPromoted = state.runSuccesses > 0;
+          const spent = await extendHalf(state, half, EXTENSION_HALF_ATTEMPTS);
+          if (spent > 0 && !state.extensionCounted) {
+            state.extensionCounted = true;
+            totals.blocksExtended += 1;
+          }
+          if (!wasPromoted && state.runSuccesses > 0) {
+            totals.blocksPromoted += 1;
+          }
+          if (
+            state.halves[`${half}Attempts`] >= EXTENSION_HALF_ATTEMPTS
+            || (spent === 0 && budgetRemaining() > 0 && !isCanceled() && !valve.aborted)
+          ) {
+            state.passStage = 1;
+          }
+        } else {
+          state.passStage = 1;
+        }
+        applySplits();
+        if (state.retired) {
+          state.passStage = 3;
+          continue;
+        }
+        if (state.passStage < 1) continue;
+      }
+
+      // Suspects: a mixed run primer, or a step-E promotion (primer
+      // successes still 0, but the extension found a success).
+      const suspect = (state.primerSuccesses === 0 && state.runSuccesses > 0)
+        || (state.primerSuccesses >= 1
+          && state.primerSuccesses < hard.primerPerBlock);
+      if (!suspect) {
+        state.passStage = 3;
+        continue;
+      }
+
+      // Stage 1 — guarantee the split trigger's depth in both halves;
+      // drawing until balanced also cures unbalanced landings.
+      if (state.passStage < 2) {
+        if (sliceSpent()) break;
+        const spent = await balanceHalves(state, HALF_TRIGGER_ATTEMPTS);
+        if (stageSettled(state, HALF_TRIGGER_ATTEMPTS, spent)) {
+          totals.suspectsServed += 1;
+          state.passStage = 2;
+        }
+        applySplits();
+        if (state.retired) {
+          state.passStage = 3;
+          continue;
+        }
+        if (state.passStage < 2) continue;
+      }
+
+      // Stage 2 — a suspect that has not split but sits at a near-miss
+      // Fisher p earns one deeper look; the split itself still has to
+      // clear splitAlpha inside applySplits.
+      if (state.passStage < 3) {
+        if (fisherExactTwoSided(state.halves) <= hard.splitReserveAlpha) {
+          if (sliceSpent()) break;
+          const spent = await balanceHalves(state, DEEP_HALF_ATTEMPTS);
+          if (stageSettled(state, DEEP_HALF_ATTEMPTS, spent)) {
+            state.passStage = 3;
+          }
+          applySplits();
+        } else {
+          state.passStage = 3;
+        }
+      }
+    }
+    onProgress({
+      phase: 'hard-split-coverage',
+      completed: totals.reserveProbes,
+      total: slice,
+      eligible: totals.eligible,
+      failed: totals.failed,
+      note: `split-coverage pass complete; ${totals.reserveProbes} reserve probes spent`,
+    });
+    log('info', 'hard.engine.split-coverage', {
+      reserveProbes: totals.reserveProbes,
+      slice,
+      blocksExtended: totals.blocksExtended,
+      suspectsServed: totals.suspectsServed,
+      blocksPromoted: totals.blocksPromoted,
+    });
   }
 
   // --- Pool (spec §6.1) ------------------------------------------------------
@@ -819,6 +1107,12 @@ export async function runBlockScreening({
     aborted: valve.aborted,
   });
 
+  // The split-coverage pass runs after the primer-exit snapshot above
+  // (criterion 3 is stated over that exact moment) and before UCB
+  // expansion spends the headroom the pass reserves from.
+  if (!isCanceled() && !valve.aborted) {
+    await runSplitCoveragePass();
+  }
   if (!isCanceled() && !valve.aborted) {
     await runExpansionPhase();
   }

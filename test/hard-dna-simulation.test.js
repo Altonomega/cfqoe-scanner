@@ -52,16 +52,21 @@ import { createVirtualCatalog, virtualRanges } from './fixtures/virtual-catalog.
 // winning on the null map contradicts the map's purpose.
 //
 // (R3) Criterion 5's detection half (≥ 80% of heterogeneous blocks split)
-// is NOT met by the approved parameters at this budget: measured 0.557.
-// Root cause, measured: 21 of 27 undetected blocks never reached the
-// 8-probe split trigger — greedy Wilson-UCB spends the expansion budget
-// on higher-index blocks first, and mid-tier (mean q ≈ 0.475) blocks
-// starve. §9.4 names the implicated parameters (depth cap, budget,
-// allocation shape); revising them is a design decision above this
-// harness. The criterion is therefore carried as a todo test at its spec
-// value, and a live test below guards the measured floor (≥ 0.50) so a
-// regression is caught rather than silently absorbed. The false-split
-// half of criterion 5 passes as specified (≤ 5%).
+// was NOT met by the originally approved parameters: measured 0.557.
+// Root cause, measured (docs/HARD-SCAN-5B-ANALYSIS.md): 23 of the 27
+// undetected blocks never reached the 8-probe split trigger — greedy
+// Wilson-UCB spends the expansion budget on higher-index blocks first,
+// mid-tier (mean q ≈ 0.475) blocks starve, and every block whose primer
+// came back 0/3 received zero expansion probes; the split signal lives
+// in the per-half counters, which the block-total index cannot see.
+// The fix is the split-coverage pass (analysis §6): a bounded reserve
+// between the primer and UCB expansion that extends 0-success blocks
+// into their less-observed half, guarantees trigger depth to mixed
+// primers, and deepens near-misses — capped at splitReserveFraction of
+// the post-primer headroom, with no change to primer depth, depth cap,
+// split thresholds, or budget. The criterion is asserted live below at
+// its spec value; the ≥ 0.50 floor test remains as a regression guard.
+// The false-split half of criterion 5 passes as specified (≤ 5%).
 
 const REAL_BLOCKS = 7697;
 const SIM_SEED = 777;
@@ -248,16 +253,23 @@ test('criterion 5 — split detection on Map D stays at or above the measured fl
   const hetero = dna.catalog.heterogeneousBlockIds();
   const splitParents = new Set(dna.result.splits.map((split) => split.parent));
   const detected = hetero.filter((blockId) => splitParents.has(blockId)).length;
-  // Measured floor for the approved parameters (see R3 in the header):
-  // the spec's 0.80 target is carried as the todo test below.
+  // Regression floor (see R3 in the header): the pre-fix design
+  // measured 0.557; the spec's 0.80 bar is asserted live below.
   assert.ok(
     detected / hetero.length >= 0.5,
     `split detection ${detected / hetero.length} regressed below the measured floor 0.50`,
   );
 });
 
-test('criterion 5 (spec) — heterogeneous split detection ≥ 0.80', {
-  todo: 'measured 0.557 under the approved parameters: mid-tier blocks starve before reaching the split trigger (see R3 in this file header); implicated parameters per spec §9.4 are depth cap / budget / allocation shape — a design revision, not a harness fix',
+test('criterion 5 (spec) — heterogeneous split detection ≥ 0.80', async () => {
+  const dna = await dnaRun('heterogeneous');
+  const hetero = dna.catalog.heterogeneousBlockIds();
+  const splitParents = new Set(dna.result.splits.map((split) => split.parent));
+  const detected = hetero.filter((blockId) => splitParents.has(blockId)).length;
+  assert.ok(
+    detected / hetero.length >= 0.8,
+    `split detection ${detected / hetero.length} < 0.80 (${detected}/${hetero.length})`,
+  );
 });
 
 test('criterion 6 — warm start (A → A′): cold recall reached with ≤ 45% of the cold probes', async () => {
