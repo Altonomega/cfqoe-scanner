@@ -19,6 +19,8 @@ import {
   runAdaptiveEligibilityBatch,
   selectDelayedRetries,
   selectRecheckFinalists,
+  tunnelAttemptBudget,
+  shouldAttemptTunnelCandidate,
 } from "./hard-scheduler.js";
 import { probeWebsocket } from "./probe/websocket.js";
 import { startXray } from "./xray/manager.js";
@@ -29,6 +31,7 @@ import { probeStreaming } from "./streaming/probe.js";
 import {
   applyTunnelResults,
   buildEligibilitySummary,
+  hasScoredTunnelStage,
   rankCandidates,
   renderTopList,
   REPORT_SCHEMA,
@@ -993,23 +996,77 @@ export async function runHardScan({
         streamingWorkloads = settings.streaming.enabled
           ? resolveWorkloads({ settings, catalog, kind: "streaming" })
           : [],
-        finalists = candidates
-          .filter(
-            (entry) =>
-              entry.eligibility.successRate >= settings.scan.minimumSuccessRate,
-          )
-          .slice(0, settings.tunnel.limit),
-        total = finalists.length * settings.tunnel.rounds;
-      let completed = 0;
+        // The full rate-passing pool is kept, not just the first
+        // `limit`: backfill (P-3) walks deeper whenever an attempt
+        // yields no scored stage, exactly as in the Full path.
+        pool = candidates.filter(
+          (entry) =>
+            entry.eligibility.successRate >= settings.scan.minimumSuccessRate,
+        ),
+        attemptBudget = tunnelAttemptBudget(settings.tunnel.limit, pool.length),
+        // Same derivation as the `requirements` the summaries below are
+        // built with — the backfill verdict and the report must agree
+        // on which stages count.
+        tunnelRequirements = {
+          browsing: settings.browsing.enabled,
+          streaming: settings.streaming.enabled,
+          load: Boolean(settings.load?.enabled),
+        };
+      let completed = 0,
+        attempts = 0,
+        scoredSlots = 0,
+        plannedCandidates = 0,
+        total = 0;
+      // The progress total counts the candidates the stage currently
+      // plans to measure: the slot limit at first, growing by one per
+      // earned promotion, never beyond the attempt budget. It is
+      // recomputed at each candidate's start from accounted state
+      // (attempts/scored of finished candidates only), so a total never
+      // shrinks or overshoots mid-candidate.
+      const computePlannedCandidates = () =>
+        Math.min(
+          attempts +
+            Math.max(
+              0,
+              Math.min(
+                settings.tunnel.limit - scoredSlots,
+                pool.length - attempts,
+              ),
+            ),
+          attemptBudget,
+        );
+      plannedCandidates = computePlannedCandidates();
+      total = plannedCandidates * settings.tunnel.rounds;
       onProgress({
         phase: "hard-finalize",
         completed,
         total,
-        eligible: finalists.length,
+        eligible: plannedCandidates,
         failed: 0,
         note: "final QoE ranking",
       });
-      for (const candidate of finalists) {
+      for (const candidate of pool) {
+        if (
+          !shouldAttemptTunnelCandidate({
+            attempts,
+            scored: scoredSlots,
+            limit: settings.tunnel.limit,
+            budget: attemptBudget,
+          })
+        )
+          break;
+        // Past the first `limit` attempts every attempt is a promotion
+        // into a slot an unscored candidate left empty — log it, so a
+        // report with more tested rows than the limit is explainable.
+        if (attempts >= settings.tunnel.limit)
+          logger.info("hard.tunnel.backfill", {
+            ip: candidate.ip,
+            attempts,
+            scored: scoredSlots,
+          });
+        plannedCandidates = computePlannedCandidates();
+        total = plannedCandidates * settings.tunnel.rounds;
+        attempts += 1;
         const browsingResults = [],
           streamingResults = [],
           loadResults = [];
@@ -1116,7 +1173,7 @@ export async function runHardScan({
               phase: "hard-finalize",
               completed,
               total,
-              eligible: finalists.length,
+              eligible: plannedCandidates,
               failed: 0,
               currentRange: candidate.range,
               note: candidate.ip,
@@ -1128,6 +1185,16 @@ export async function runHardScan({
           streaming: streamingResults,
           load: loadResults,
         });
+        // Only a candidate that scored in some enabled stage fills its
+        // slot; anything else leaves the slot open for the next pool
+        // entry (bounded by the attempt budget in the loop header).
+        if (
+          hasScoredTunnelStage(
+            tunnelResults.get(candidate.ip),
+            tunnelRequirements,
+          )
+        )
+          scoredSlots += 1;
       }
       return { xrayInfo, tunnelResults };
     })({

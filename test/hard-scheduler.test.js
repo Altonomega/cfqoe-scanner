@@ -52,7 +52,7 @@ test('dead candidate stops when remaining rounds cannot reach threshold', async 
   assert.equal(observations.length, 2);
 });
 
-import { selectDelayedRetries, orderForTunnelSelection, selectRecheckFinalists } from '../src/hard-scheduler.js';
+import { selectDelayedRetries, orderForTunnelSelection, selectRecheckFinalists, tunnelAttemptBudget, shouldAttemptTunnelCandidate } from '../src/hard-scheduler.js';
 
 const ok = { ok: true };
 const retryable = { ok: false, error: 'timeout' };
@@ -147,4 +147,47 @@ test('recheck selection: legacy entries without a block group by their /24; spli
     { ip: '10.0.0.129', block: '10.0.0.128/25' },
   ];
   assert.deepEqual(selectRecheckFinalists(splits, { limit: 3, perBlock: 1 }).map((e) => e.ip), ['10.0.0.1', '10.0.0.129']);
+});
+
+test('tunnel backfill budget: twice the limit, capped by the pool', () => {
+  assert.equal(tunnelAttemptBudget(5, 20), 10);
+  assert.equal(tunnelAttemptBudget(5, 7), 7);
+  assert.equal(tunnelAttemptBudget(5, 3), 3);
+  assert.equal(tunnelAttemptBudget(2, 5), 4);
+  assert.equal(tunnelAttemptBudget(0, 10), 0);
+  assert.equal(tunnelAttemptBudget(5, 0), 0);
+});
+
+test('tunnel backfill continuation: stop at filled slots or at the budget', () => {
+  assert.equal(shouldAttemptTunnelCandidate({ attempts: 0, scored: 0, limit: 2, budget: 4 }), true);
+  assert.equal(shouldAttemptTunnelCandidate({ attempts: 3, scored: 1, limit: 2, budget: 4 }), true);
+  assert.equal(shouldAttemptTunnelCandidate({ attempts: 1, scored: 2, limit: 2, budget: 4 }), false);
+  assert.equal(shouldAttemptTunnelCandidate({ attempts: 4, scored: 0, limit: 2, budget: 4 }), false);
+});
+
+// Drives the two policy functions exactly as the pipeline loop headers
+// do, over scripted per-candidate outcomes (true = scored a stage).
+function driveBackfill({ limit, outcomes }) {
+  const budget = tunnelAttemptBudget(limit, outcomes.length);
+  let attempts = 0;
+  let scored = 0;
+  for (const outcome of outcomes) {
+    if (!shouldAttemptTunnelCandidate({ attempts, scored, limit, budget })) break;
+    attempts += 1;
+    if (outcome) scored += 1;
+  }
+  return { attempts, scored };
+}
+
+test('tunnel backfill: unscored attempts promote the next pool entry until slots fill', () => {
+  // Two dead tunnels, then two scoring ones: 4 attempts fill 2 slots.
+  assert.deepEqual(driveBackfill({ limit: 2, outcomes: [false, false, true, true, true] }), { attempts: 4, scored: 2 });
+  // Every candidate scores: no promotion is ever spent.
+  assert.deepEqual(driveBackfill({ limit: 2, outcomes: [true, true, true] }), { attempts: 2, scored: 2 });
+});
+
+test('tunnel backfill: a fully dead pool stops at the budget, never walks the whole pool', () => {
+  assert.deepEqual(driveBackfill({ limit: 2, outcomes: [false, false, false, false, false, false, false] }), { attempts: 4, scored: 0 });
+  // A pool smaller than the budget is exhausted instead.
+  assert.deepEqual(driveBackfill({ limit: 5, outcomes: [false, false, false] }), { attempts: 3, scored: 0 });
 });

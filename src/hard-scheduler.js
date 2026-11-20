@@ -139,6 +139,24 @@ export function orderForTunnelSelection(entries, { decisionByIp = new Map(), ver
     .map(({ entry }) => entry);
 }
 
+// Tunnel backfill (Probe P-3): the tunnel stage fills `limit` slots, but
+// a candidate that yields no scored stage — Xray never started, or every
+// enabled stage errored unscored — must not burn one: the next eligible
+// candidate is promoted in its place. The promotion budget is bounded at
+// twice the limit (and at the pool itself) so a bad-path day, where every
+// tunnel dies, cannot turn the stage into an unbounded crawl; unscored
+// attempts fail fast, so the bound is the whole cost. Slot ORDER and
+// eligibility are untouched — backfill only decides how far down the
+// already-ordered pool the stage may walk.
+export function tunnelAttemptBudget(limit, poolSize) {
+  const slots = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0,
+    pool = Number.isFinite(poolSize) && poolSize > 0 ? Math.floor(poolSize) : 0;
+  return Math.min(pool, 2 * slots);
+}
+export function shouldAttemptTunnelCandidate({ attempts, scored, limit, budget }) {
+  return scored < limit && attempts < budget;
+}
+
 // Verify-stage selection for Hard finalize: the top `limit` finalists in
 // the caller's order, with at most `perBlock` finalists from any one
 // catalog block — the diversity cap hard.recheckPerBlock documents.
