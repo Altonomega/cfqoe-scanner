@@ -10,22 +10,65 @@ import path from "node:path";
 // probes and never interprets colo beyond storing it verbatim.
 
 export const REPUTATION_VERSION = 1;
-export const REPUTATION_HALF_LIFE_DAYS = 14;
 
-// One run can add at most 32 probes to a block (the depth cap), so capping
-// the stored prior at twice that keeps fresh evidence able to outvote stale
-// history within a single run (spec §7.2).
-const MAX_STORED_ATTEMPTS = 64;
+// The reputation model's tunable thresholds, gathered into one exported
+// constant so the settings layer can govern them at wiring time: the
+// functions below accept any subset of these as options and fall back to
+// the spec values here. Nothing else in the module hard-codes them.
+// - halfLifeDays (§7.2): evidence decays continuously, halving every 14
+//   days — there is deliberately no age at which a record turns "stale".
+// - maxStoredAttempts (§7.2): one run can add at most 32 probes to a block
+//   (the depth cap), so capping the stored prior at twice that keeps fresh
+//   evidence able to outvote stale history within a single run.
+// - skipAgeDays / confirmAgeDays (§7.3): the freshness ladder — a block
+//   seen within skipAgeDays with enough evidence skips its primer; within
+//   confirmAgeDays it earns one confirmation probe; anything older — or
+//   decayed to nothing — pays the full primer.
+export const REPUTATION_DEFAULTS = {
+  halfLifeDays: 14,
+  skipAgeDays: 3,
+  confirmAgeDays: 21,
+  maxStoredAttempts: 64,
+};
+
 const MAX_BEST_CANDIDATES = 4;
 
-// Freshness tiers (spec §7.3): a recently seen block with enough evidence
-// skips its primer entirely; a somewhat older block earns one confirmation
-// probe; anything older — or decayed to nothing — pays the full primer.
-const SKIP_PRIMER_MAX_AGE_DAYS = 3;
-const CONFIRM_PRIMER_MAX_AGE_DAYS = 21;
+// A property of the ladder rather than a governed threshold (§7.3): below
+// this many decayed attempts a block has too little evidence to skip.
 const SKIP_PRIMER_MIN_ATTEMPTS = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function positiveOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function nonNegativeOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+// Resolve a caller's partial options over REPUTATION_DEFAULTS. Invalid
+// values fall back to the default instead of throwing: reputation is an
+// optimization, never a dependency, so a bad knob must not break a run.
+function resolveThresholds(options) {
+  const source = options && typeof options === "object" ? options : {};
+  return {
+    halfLifeDays: positiveOr(source.halfLifeDays, REPUTATION_DEFAULTS.halfLifeDays),
+    skipAgeDays: nonNegativeOr(source.skipAgeDays, REPUTATION_DEFAULTS.skipAgeDays),
+    confirmAgeDays: nonNegativeOr(
+      source.confirmAgeDays,
+      REPUTATION_DEFAULTS.confirmAgeDays,
+    ),
+    maxStoredAttempts: Math.max(
+      1,
+      Math.floor(
+        positiveOr(source.maxStoredAttempts, REPUTATION_DEFAULTS.maxStoredAttempts),
+      ),
+    ),
+  };
+}
 
 // Each record carries two timestamps on purpose. `lastSeenAt` is when the
 // block was last actually probed and drives freshness; `countsAsOf` is the
@@ -150,10 +193,12 @@ export function createReputationStore(catalogHash = null) {
 }
 
 // The decayed view of a record's counts at `now` (spec §7.2): exponential
-// decay with a 14-day half-life, measured from the instant the counts were
-// last rebased. Pure — it never mutates the record.
-export function decayedCounts(record, now = Date.now()) {
+// decay with a half-life of `options.halfLifeDays` (14 by default),
+// measured from the instant the counts were last rebased. Pure — it never
+// mutates the record.
+export function decayedCounts(record, now = Date.now(), options = {}) {
   if (!record) return { attempts: 0, successes: 0 };
+  const { halfLifeDays } = resolveThresholds(options);
   const counts = sanitizeCounts(record.attempts, record.successes);
   const asOfMs = toTimeMs(record.countsAsOf ?? record.lastSeenAt);
   const nowMs = toTimeMs(now);
@@ -161,7 +206,7 @@ export function decayedCounts(record, now = Date.now()) {
     return counts;
   }
   const ageDays = (nowMs - asOfMs) / DAY_MS;
-  const weight = 2 ** (-ageDays / REPUTATION_HALF_LIFE_DAYS);
+  const weight = 2 ** (-ageDays / halfLifeDays);
   const attempts = Math.round(counts.attempts * weight);
   const successes = Math.min(attempts, Math.round(counts.successes * weight));
   return { attempts, successes };
@@ -169,27 +214,24 @@ export function decayedCounts(record, now = Date.now()) {
 
 // Which primer a block needs at run start (spec §7.3): "skip" (seeded from
 // reputation, 0 probes), "confirm" (1 probe), or "full" (the whole primer).
-export function primerTierForRecord(record, now = Date.now()) {
+// The ladder's age windows come from `options.skipAgeDays` /
+// `options.confirmAgeDays` (3 / 21 by default); this tier classification is
+// the module's only freshness verdict — there is no separate staleness
+// cutoff, because decay already prices a record's age into its evidence.
+export function primerTierForRecord(record, now = Date.now(), options = {}) {
   if (!record) return "full";
+  const thresholds = resolveThresholds(options);
   const nowMs = toTimeMs(now);
   const lastSeenMs = toTimeMs(record.lastSeenAt);
   if (!Number.isFinite(nowMs) || !Number.isFinite(lastSeenMs)) return "full";
-  const { attempts } = decayedCounts(record, nowMs);
+  const { attempts } = decayedCounts(record, nowMs, thresholds);
   if (attempts < 1) return "full";
   const ageDays = Math.max(0, (nowMs - lastSeenMs) / DAY_MS);
-  if (ageDays <= SKIP_PRIMER_MAX_AGE_DAYS && attempts >= SKIP_PRIMER_MIN_ATTEMPTS) {
+  if (ageDays <= thresholds.skipAgeDays && attempts >= SKIP_PRIMER_MIN_ATTEMPTS) {
     return "skip";
   }
-  if (ageDays <= CONFIRM_PRIMER_MAX_AGE_DAYS) return "confirm";
+  if (ageDays <= thresholds.confirmAgeDays) return "confirm";
   return "full";
-}
-
-export function isStale(record, now = Date.now(), staleDays = REPUTATION_HALF_LIFE_DAYS) {
-  if (!record) return true;
-  const nowMs = toTimeMs(now);
-  const lastSeenMs = toTimeMs(record.lastSeenAt);
-  if (!Number.isFinite(nowMs) || !Number.isFinite(lastSeenMs)) return true;
-  return nowMs - lastSeenMs > staleDays * DAY_MS;
 }
 
 // Tolerant by design: reputation is an optimization, never a dependency, so
@@ -239,9 +281,11 @@ export function loadReputation(file, options = {}) {
   }
   // Decay on load (spec §7.2): counts are rebased to `now`, so saving the
   // loaded store and loading it again never decays the same evidence twice.
+  // The caller's options ride along so a governed half-life applies here
+  // exactly as it does everywhere else.
   if (Number.isFinite(nowMs)) {
     for (const record of Object.values(store.blocks)) {
-      const decayed = decayedCounts(record, nowMs);
+      const decayed = decayedCounts(record, nowMs, options);
       record.attempts = decayed.attempts;
       record.successes = decayed.successes;
       record.countsAsOf = toIsoString(nowMs);
@@ -277,11 +321,13 @@ export function saveReputation(file, store, options = {}) {
 // `{ block, attempts, successes, best | candidates, colo, runId, parent,
 // children }`; results with no probes and no candidates carry no evidence
 // and are skipped. Stored counts are the decayed prior plus the run's fresh
-// counts, capped so history can never outweigh a single run (spec §7.2).
-export function mergeRunIntoReputation(store, blockResults, now = Date.now()) {
+// counts, capped at `options.maxStoredAttempts` (64 by default) so history
+// can never outweigh a single run (spec §7.2).
+export function mergeRunIntoReputation(store, blockResults, now = Date.now(), options = {}) {
   if (!store || typeof store !== "object") return store;
   if (!store.blocks || typeof store.blocks !== "object") store.blocks = {};
   if (!Array.isArray(blockResults)) return store;
+  const thresholds = resolveThresholds(options);
   const nowMs = toTimeMs(now);
   const nowIso = toIsoString(Number.isFinite(nowMs) ? nowMs : Date.now());
   let mergedAny = false;
@@ -298,13 +344,13 @@ export function mergeRunIntoReputation(store, blockResults, now = Date.now()) {
     if (run.attempts === 0 && incoming.length === 0) continue;
     const existing = store.blocks[result.block] ?? null;
     const prior = existing
-      ? decayedCounts(existing, nowMs)
+      ? decayedCounts(existing, nowMs, thresholds)
       : { attempts: 0, successes: 0 };
     let attempts = prior.attempts + run.attempts;
     let successes = prior.successes + run.successes;
-    if (attempts > MAX_STORED_ATTEMPTS) {
-      successes = Math.round((successes * MAX_STORED_ATTEMPTS) / attempts);
-      attempts = MAX_STORED_ATTEMPTS;
+    if (attempts > thresholds.maxStoredAttempts) {
+      successes = Math.round((successes * thresholds.maxStoredAttempts) / attempts);
+      attempts = thresholds.maxStoredAttempts;
     }
     successes = Math.min(successes, attempts);
     store.blocks[result.block] = {

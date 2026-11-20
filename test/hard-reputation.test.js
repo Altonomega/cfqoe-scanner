@@ -5,10 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { paths } from "../src/platform/paths.js";
 import {
+  REPUTATION_DEFAULTS,
   REPUTATION_VERSION,
   createReputationStore,
   decayedCounts,
-  isStale,
   loadReputation,
   mergeRunIntoReputation,
   primerTierForRecord,
@@ -149,10 +149,40 @@ test("primer tiers fall back to full when evidence is thin or decayed away", () 
   assert.equal(primerTierForRecord(rebased, T0), "confirm");
 });
 
-test("isStale compares lastSeenAt against the given window", () => {
-  assert.equal(isStale(recordAt({ attempts: 5, successes: 5, ageDays: 13 }), T0, 14), false);
-  assert.equal(isStale(recordAt({ attempts: 5, successes: 5, ageDays: 15 }), T0, 14), true);
-  assert.equal(isStale(null, T0, 14), true);
+test("REPUTATION_DEFAULTS carries the spec thresholds in one place", () => {
+  assert.deepEqual(REPUTATION_DEFAULTS, {
+    halfLifeDays: 14,
+    skipAgeDays: 3,
+    confirmAgeDays: 21,
+    maxStoredAttempts: 64,
+  });
+});
+
+test("custom thresholds override decay, tier windows, and the merge cap", () => {
+  // A 7-day half-life halves twice in 14 days instead of once.
+  const record = recordAt({ attempts: 100, successes: 80, ageDays: 0 });
+  assert.deepEqual(decayedCounts(record, T0 + 14 * DAY_MS, { halfLifeDays: 7 }), {
+    attempts: 25,
+    successes: 20,
+  });
+  // A wider skip window promotes a 5-day-old block from confirm to skip.
+  const fiveDays = recordAt({ attempts: 20, successes: 18, ageDays: 5 });
+  assert.equal(primerTierForRecord(fiveDays, T0), "confirm");
+  assert.equal(primerTierForRecord(fiveDays, T0, { skipAgeDays: 7 }), "skip");
+  // A narrower confirm window demotes a 10-day-old block to the full primer.
+  const tenDays = recordAt({ attempts: 20, successes: 18, ageDays: 10 });
+  assert.equal(primerTierForRecord(tenDays, T0), "confirm");
+  assert.equal(primerTierForRecord(tenDays, T0, { confirmAgeDays: 7 }), "full");
+  // A lower storage cap binds the merge exactly like the default 64 does.
+  const store = createReputationStore("catalog-a");
+  mergeRunIntoReputation(
+    store,
+    [{ block: "104.16.0.0/24", attempts: 32, successes: 16 }],
+    T0,
+    { maxStoredAttempts: 10 },
+  );
+  assert.equal(store.blocks["104.16.0.0/24"].attempts, 10);
+  assert.equal(store.blocks["104.16.0.0/24"].successes, 5); // round(16 * 10 / 32)
 });
 
 test("merge keeps only the top 4 candidates, ranked by successes", () => {
