@@ -19,13 +19,14 @@ import {
 import { loadSettings, saveSettings } from "./config/settings.js";
 import { parseVlessUri, describeVless } from "./config/vless.js";
 import { locateXray, xrayVersion, xrayInstallHint } from "./platform/xray.js";
-import { createLogger, summarizeLogFile } from "./logging/logger.js";
+import { createLogger, summarizeLogFile, digestLines } from "./logging/logger.js";
+import { writeDebugBundle } from "./logging/bundle.js";
 import { emitRunStart, emitRunEnd } from "./logging/lifecycle.js";
 import { runScan } from "./scan.js";
 import { runHardScan } from "./hard-scan.js";
 import { runMenu, quickProfile, researchProfile } from "./menu/index.js";
 import { createWebServer, platformNoticeLines } from "./web/server.js";
-const HELP_TEXT = `${banner()}\n\n${color.bold("Usage")}\n  cfqoe                     open the web UI in your browser\n  cfqoe web                 same as above\n  cfqoe menu                open the terminal menu instead\n  cfqoe scan [options]      run a full scan\n  cfqoe quick [options]     run a reduced scan\n  cfqoe research [options]  run the slow repeated-evidence scan\n  cfqoe hard [options]      run the resumable hard deep scan\n  cfqoe resume [options]    resume the last hard scan\n  cfqoe import <vless-uri>  store the configuration locally\n  cfqoe check               verify Node, Xray and stored configuration\n  cfqoe results             print the latest ranking\n  cfqoe diagnose [file]     summarize a log file\n  cfqoe help                show this help\n\n${color.bold("Scan options")}\n  --max N               maximum candidate IPs (scan/quick only)\n  --rounds N            eligibility rounds\n  --tunnel-limit N      candidates measured through the real tunnel\n  --tunnel-rounds N     observations per candidate\n  --segments N          streaming segments per observation\n  --verify-limit N      finalists sent to independent verification\n  --no-verify           skip independent verification (faster, weaker evidence)\n  --no-retry            skip the delayed retry of transient failures\n  --lowest-variant      use the lowest HLS rendition (conservative fixed mode)\n  --no-tunnel           skip the VLESS tunnel stage\n  --no-browsing         skip web transfer workloads\n  --no-streaming        skip streaming workloads\n  --no-load             skip the real-load stage (multi-megabyte transfer)\n  --load-duration N     seconds of sustained download per observation\n  --load-chunk-mb N     download chunk size in megabytes\n  --load-flows N        parallel download flows used to saturate the link\n  --load-control        also measure a non-Cloudflare control download\n  --gate-profile NAME   gate thresholds: balanced (default), strict, tolerant\n  --xray-path PATH      explicit Xray executable\n  --debug               verbose structured logging\n\n${color.bold("Principle")}\n  TCP connect time is diagnostic only. Ranking uses real WebSocket eligibility with\n  Wilson confidence bounds, adaptive verification, portable web transfer and\n  sequential video segment streaming. Every result carries a confidence label.\n`;
+const HELP_TEXT = `${banner()}\n\n${color.bold("Usage")}\n  cfqoe                     open the web UI in your browser\n  cfqoe web                 same as above\n  cfqoe menu                open the terminal menu instead\n  cfqoe scan [options]      run a full scan\n  cfqoe quick [options]     run a reduced scan\n  cfqoe research [options]  run the slow repeated-evidence scan\n  cfqoe hard [options]      run the resumable hard deep scan\n  cfqoe resume [options]    resume the last hard scan\n  cfqoe import <vless-uri>  store the configuration locally\n  cfqoe check               verify Node, Xray and stored configuration\n  cfqoe results             print the latest ranking\n  cfqoe diagnose [file] [--bundle]  summarize a log file; --bundle also exports a redacted debug bundle\n  cfqoe help                show this help\n\n${color.bold("Scan options")}\n  --max N               maximum candidate IPs (scan/quick only)\n  --rounds N            eligibility rounds\n  --tunnel-limit N      candidates measured through the real tunnel\n  --tunnel-rounds N     observations per candidate\n  --segments N          streaming segments per observation\n  --verify-limit N      finalists sent to independent verification\n  --no-verify           skip independent verification (faster, weaker evidence)\n  --no-retry            skip the delayed retry of transient failures\n  --lowest-variant      use the lowest HLS rendition (conservative fixed mode)\n  --no-tunnel           skip the VLESS tunnel stage\n  --no-browsing         skip web transfer workloads\n  --no-streaming        skip streaming workloads\n  --no-load             skip the real-load stage (multi-megabyte transfer)\n  --load-duration N     seconds of sustained download per observation\n  --load-chunk-mb N     download chunk size in megabytes\n  --load-flows N        parallel download flows used to saturate the link\n  --load-control        also measure a non-Cloudflare control download\n  --gate-profile NAME   gate thresholds: tolerant (default), balanced, strict\n  --xray-path PATH      explicit Xray executable\n  --debug               verbose structured logging\n\n${color.bold("Principle")}\n  TCP connect time is diagnostic only. Ranking uses real WebSocket eligibility with\n  Wilson confidence bounds, adaptive verification, portable web transfer and\n  sequential video segment streaming. Every result carries a confidence label.\n`;
 function parseArgs(args) {
   const parsed = { flags: new Set(), values: new Map(), positional: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -459,7 +460,7 @@ export async function main(argv = process.argv.slice(2)) {
           );
         })();
       case "diagnose":
-        return (function (file) {
+        return (function (file, bundle) {
           const layout = ensureDirectories();
           let target = file;
           if (!target) {
@@ -475,11 +476,28 @@ export async function main(argv = process.argv.slice(2)) {
             target = path.join(layout.logs, files[0].name);
           }
           const summary = summarizeLogFile(target);
+          // --bundle: after the digest, export the one-file redacted
+          // debug bundle for this run (Signal §3.6) and say where it
+          // landed — the file a bug report gets attached with.
+          if (bundle) {
+            const bundlePath = writeDebugBundle({ layout, logFile: target });
+            return (
+              console.log(`Debug bundle: ${bundlePath}`),
+              console.log(
+                color.dim(
+                  "One redacted JSON file: environment, run digest, full log, report and settings. Safe to attach to a bug report.",
+                ),
+              ),
+              0
+            );
+          }
           return (
             console.log(`Log: ${target}`),
             console.log(
-              `Events: ${summary.total}  errors: ${summary.byLevel.error}  warnings: ${summary.byLevel.warn}\n`,
+              `Events: ${summary.total}  errors: ${summary.byLevel.error}  warnings: ${summary.byLevel.warn}`,
             ),
+            digestLines(summary).forEach((line) => console.log(line)),
+            console.log(""),
             summary.errors.length > 0
               ? console.log(
                   table(
@@ -493,7 +511,10 @@ export async function main(argv = process.argv.slice(2)) {
               : console.log(color.green("No warnings or errors recorded.")),
             0
           );
-        })(rest[0]);
+        })(
+          rest.find((arg) => arg !== "--bundle"),
+          rest.includes("--bundle"),
+        );
       case "help":
       case "--help":
       case "-h":

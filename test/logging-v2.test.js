@@ -262,3 +262,93 @@ test('frozen-scan fixture: run.end decides the end status', () => {
   ]));
   assert.equal(canceled.endStatus, 'canceled');
 });
+
+test('digest joins run.start with the calibration and reputation records (W1 gate C4)', () => {
+  const filePath = writeFixtureLog([
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:00.000Z', elapsedMs: 0, seq: 1,
+      runId: 'joined', level: 'info', phase: null, event: 'run.start',
+      mode: 'hard', appVersion: '0.9.0',
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:05.000Z', elapsedMs: 5000, seq: 2,
+      runId: 'joined', level: 'info', phase: 'calibrating', event: 'hard.calibration',
+      selectedConcurrency: 12, requestedConcurrency: 16, reason: 'measured',
+      controlIp: '1.1.1.1',
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:06.000Z', elapsedMs: 6000, seq: 3,
+      runId: 'joined', level: 'info', phase: null, event: 'hard.reputation.loaded',
+      records: 321,
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:07.000Z', elapsedMs: 7000, seq: 4,
+      runId: 'joined', level: 'info', phase: 'primer', event: 'hard.engine.progress',
+      completed: 100, total: 1000, eligible: 9, failed: 91,
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:17.000Z', elapsedMs: 17000, seq: 5,
+      runId: 'joined', level: 'info', phase: 'primer', event: 'hard.engine.progress',
+      completed: 500, total: 1000, eligible: 40, failed: 460,
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:18.000Z', elapsedMs: 18000, seq: 6,
+      runId: 'joined', level: 'info', phase: 'expansion', event: 'hard.engine.progress',
+      completed: 10, total: 90, eligible: 3, failed: 7,
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:01:00.000Z', elapsedMs: 60000, seq: 7,
+      runId: 'joined', level: 'info', phase: null, event: 'hard.reputation.saved',
+      blocks: 300,
+    }),
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:01:01.000Z', elapsedMs: 61000, seq: 8,
+      runId: 'joined', level: 'info', phase: null, event: 'run.end',
+      status: 'completed', durationMs: 61000,
+    }),
+  ]);
+  const summary = summarizeLogFile(filePath);
+  assert.equal(summary.endStatus, 'completed');
+  assert.equal(summary.mode, 'hard');
+  assert.equal(summary.appVersion, '0.9.0');
+  assert.deepEqual(summary.calibration, {
+    selectedConcurrency: 12,
+    requestedConcurrency: 16,
+    reason: 'measured',
+    controlIp: '1.1.1.1',
+  });
+  assert.deepEqual(summary.reputation, { recordsLoaded: 321, blocksSaved: 300 });
+  assert.deepEqual(summary.phases, [
+    { phase: 'primer', durationMs: 10000, completed: 500, total: 1000, eligible: 40, failed: 460 },
+    { phase: 'expansion', durationMs: 0, completed: 10, total: 90, eligible: 3, failed: 7 },
+  ]);
+});
+
+test('streaming digest: chunk boundaries and multibyte text survive intact', () => {
+  // One record with a >64 KB Persian error message forces the line
+  // across several read chunks, with multi-byte characters straddling
+  // the boundaries; thousands of small records follow it. The digest
+  // must count every record and return the message byte-for-byte.
+  const longReason = 'خطای شبکه در مسیر سنجش — '.repeat(4000);
+  const lines = [
+    JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:00.000Z', elapsedMs: 0, seq: 1,
+      runId: 'streamed', level: 'error', phase: null, event: 'xray.failed',
+      error: { class: 'xray_start', message: longReason },
+    }),
+  ];
+  for (let index = 0; index < 5000; index += 1) {
+    lines.push(JSON.stringify({
+      v: 2, time: '2026-11-20T10:00:01.000Z', elapsedMs: index, seq: index + 2,
+      runId: 'streamed', level: 'debug', phase: 'primer',
+      event: 'hard.engine.progress', completed: index, total: 5000,
+      eligible: 0, failed: index,
+    }));
+  }
+  const summary = summarizeLogFile(writeFixtureLog(lines));
+  assert.equal(summary.total, 5001);
+  assert.equal(summary.byLevel.error, 1);
+  assert.equal(summary.byLevel.debug, 5000);
+  assert.equal(summary.errors[0].reason, longReason);
+  assert.equal(summary.lastProgress.completed, 4999);
+});
