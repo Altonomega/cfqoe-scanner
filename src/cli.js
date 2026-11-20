@@ -217,6 +217,7 @@ async function runScanCommand(parsed, { profile }) {
       layout,
       logger,
       runId: logger.runId,
+      mode: profile,
       onProgress: (progress) =>
         writeProgress(phaseLabel(progress.phase), {
           ...progress,

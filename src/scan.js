@@ -53,6 +53,11 @@ export async function runScan({
   logger,
   onProgress = () => {},
   runId = randomUUID(),
+  // The caller's mode vocabulary ("quick" | "full" | "research"):
+  // the profile transform erases it from the settings, so it travels
+  // beside them and lands in the report — a report that cannot say
+  // which mode produced it gets mislabeled by every reader downstream.
+  mode,
   // Optional external cancel token (AbortSignal-shaped): the web
   // layer's stop button. When it aborts, the scan stops starting new
   // work at the next stage/batch boundary and still writes its report
@@ -99,16 +104,18 @@ export async function runScan({
         timeoutMs: effectiveSettings.scan.timeoutMs,
         seed,
         signal,
-        // Ladder positions ride the calibrating phase's own progress
-        // channel: completed/total become levels measured / ladder
+        // Hunt attempts and ladder positions ride the calibrating
+        // phase's own progress channel: completed/total become
+        // attempts made / hunt size, then levels measured / ladder
         // size, so the consoles count calibration instead of
         // watching a silent minute.
-        onProgress: ({ completed, total, level }) =>
+        onProgress: ({ completed, total, level, hunt }) =>
           emitProgress({
             phase: "calibrating",
             completed,
             total,
             ...(level != null ? { level } : {}),
+            ...(hunt ? { hunt: true } : {}),
           }),
       });
     } catch (error) {
@@ -654,6 +661,7 @@ export async function runScan({
     written = writeReport({
       directory: layout.results,
       runId,
+      mode,
       target,
       settings: {
         ...effectiveSettings,

@@ -41,6 +41,44 @@ test("counters carry the narration fields: screening round + current candidate I
   assert.equal(state.buildSnapshot(FACTS).run.counters.currentIp, "203.0.113.7");
 });
 
+test("calibration counters: the hunt flag rides hunt events through the store and clears on ladder events (0.9.2 D4)", async () => {
+  const state = makeState();
+  const frames = [];
+  state.beginRun({ mode: "full", runId: "run-hunt", settings: {} });
+  state.addClient({ wantsTail: false, send: (type, payload) => frames.push({ type, payload }) });
+  // The exact sequence scan.js emits during calibration: the control
+  // hunt announces at 0 and counts each attempt with hunt: true…
+  state.onProgress({ phase: "calibrating", completed: 0, total: 32, hunt: true });
+  state.onProgress({ phase: "calibrating", completed: 17, total: 32, hunt: true });
+  const during = state.buildSnapshot(FACTS).run.counters;
+  assert.equal(during.hunt, true, "the snapshot's counters carry the hunt while it runs");
+  assert.equal(during.completed, 17);
+  assert.equal(during.total, 32);
+  // …and the broadcast counters frame carries it too — the frame is
+  // the client's only live source, so the flag must survive the
+  // store's rebuild, not just the snapshot's copy of it.
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const huntFrame = frames.find((frame) => frame.type === "counters");
+  assert.ok(huntFrame, "a counters frame was broadcast during the hunt");
+  assert.equal(huntFrame.payload.hunt, true);
+  assert.equal(huntFrame.payload.total, 32);
+  // Ladder events carry no hunt flag; the counters must stop
+  // claiming a hunt, or the client labels ladder levels as hunt
+  // attempts (and hunt attempts as levels) — the discrimination is
+  // the whole point of the flag.
+  state.onProgress({ phase: "calibrating", completed: 1, total: 6, level: 2 });
+  const ladder = state.buildSnapshot(FACTS).run.counters;
+  assert.equal(ladder.hunt, false, "ladder progress is not a hunt");
+  assert.equal(ladder.completed, 1);
+  assert.equal(ladder.total, 6);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const countersFrames = frames.filter((frame) => frame.type === "counters");
+  assert.equal(countersFrames[countersFrames.length - 1].payload.hunt, false);
+  // Later phases never resurrect it.
+  state.onProgress({ phase: "screening", completed: 1, total: 120 });
+  assert.equal(state.buildSnapshot(FACTS).run.counters.hunt, false);
+});
+
 test("defect 7: after finishRun the snapshot serves the terminal status — event, snapshot and greeting agree", () => {
   const state = makeState();
   state.beginRun({ mode: "quick", runId: "run-2", settings: {} });
@@ -133,6 +171,34 @@ test("trace: summaries hand the store real probe points — successes plot their
     [["ok", 124], ["timeout", 0], ["error", 0]],
     "probe order preserved; the unmeasured success plots nothing instead of an invented height",
   );
+});
+
+test("D3: at rest the snapshot carries the checkpoint's own resume facts — verbatim phase, stored probes spent", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cfqoe-state-test-"));
+  const layout = ensureDirectories(root);
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.copyFileSync(RANGES_FILE, layout.rangesFile);
+  const state = createWebState({ layout });
+  // No checkpoint on disk: the field is absent, not null-padded.
+  assert.ok(!("resume" in state.buildSnapshot(FACTS)), "no checkpoint, no resume field");
+  const checkpoint = {
+    version: 4,
+    runId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    status: "paused",
+    phase: "primer",
+    counts: { tested: 10, eligible: 2, failed: 8, primerProbes: 500, expansionProbes: 200, blocksPrimed: 3, blocksExpanded: 0 },
+    blockState: { version: 1, totals: { probesSpent: 777, primerProbes: 500, expansionProbes: 277 }, blocks: [] },
+  };
+  fs.writeFileSync(layout.hardStateFile, JSON.stringify(checkpoint));
+  const snap = state.buildSnapshot(FACTS);
+  assert.deepEqual(
+    snap.resume,
+    { phase: "primer", probesSpent: 777 },
+    "the checkpoint's stored phase string verbatim and its stored total — not the live view's empty fields, not a recomputed sum",
+  );
+  // While a run is active the field steps aside: it describes rest.
+  state.beginRun({ mode: "hard", runId: "live-run", settings: {} });
+  assert.ok(!("resume" in state.buildSnapshot(FACTS)), "an active run suppresses the at-rest resume field");
 });
 
 test("trace: no observations, no points — and finishRun flushes the tail before the terminal run-state", () => {

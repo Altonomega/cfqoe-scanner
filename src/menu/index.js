@@ -639,6 +639,7 @@ async function runScanFlow({ layout }, mode) {
       layout,
       logger,
       runId: logger.runId,
+      mode,
       onProgress: (event) =>
         writeProgress(phaseLabel(event.phase), {
           ...event,

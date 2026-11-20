@@ -42,9 +42,12 @@ export async function calibrateWebsocketConcurrency({
   // must not record it as one (no selected concurrency, no
   // no-control warning); the run simply ends canceled.
   signal = null,
-  // Optional ladder observer, forwarded from calibrateConcurrency:
-  // one { completed: 0, total } announcement when the ladder size is
-  // known, then { completed, total, level, accepted } per level.
+  // Optional progress observer: the control hunt reports first
+  // ({ completed, total, hunt: true } — an announcement at 0, then one
+  // per attempt), then the ladder observer forwarded from
+  // calibrateConcurrency: one { completed: 0, total } announcement
+  // when the ladder size is known, then { completed, total, level,
+  // accepted } per level.
   onProgress = null,
 } = {}) {
   // Abort outranks every verdict below, including disabled and
@@ -60,10 +63,19 @@ export async function calibrateWebsocketConcurrency({
 
   let control = null,
     controlProbes = 0;
-  for (const candidate of shuffledCopy(candidates, seed).slice(0, CONTROL_HUNT_LIMIT)) {
+  const huntPool = shuffledCopy(candidates, seed).slice(0, CONTROL_HUNT_LIMIT);
+  // The hunt announces itself before the first probe and counts each
+  // attempt on the same channel the ladder uses below: on a blackhole
+  // path every probe burns its full timeout, so an unannounced hunt
+  // is minutes of silence in the UI and the log — indistinguishable
+  // from a hang. Hunt events carry `hunt: true` so consumers can tell
+  // them from the ladder counts that follow once a control exists.
+  onProgress?.({ completed: 0, total: huntPool.length, hunt: true });
+  for (const candidate of huntPool) {
     throwIfAborted(signal);
     controlProbes += 1;
     const observation = await raceWithAbort(probeTask({ ip: candidate.ip, vless, timeoutMs }), signal);
+    onProgress?.({ completed: controlProbes, total: huntPool.length, hunt: true });
     if (observation?.ok) {
       control = candidate;
       break;

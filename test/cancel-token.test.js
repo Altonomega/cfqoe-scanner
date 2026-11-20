@@ -155,6 +155,26 @@ test('runScan: a pre-aborted token skips every stage and still writes a canceled
   assert.equal(complete?.details.canceled, true);
 });
 
+test('runScan: the report carries the mode the caller actually ran', async () => {
+  const layout = tempLayout(['104.16.0.0/24', '104.17.0.0/24']);
+  const settings = createDefaultSettings('linux');
+  const controller = new AbortController();
+  controller.abort();
+  const result = await runScan({
+    vlessUri: VLESS_URI,
+    settings,
+    layout,
+    logger: recordingLogger(),
+    runId: 'mode-scan-quick',
+    mode: 'quick',
+    signal: controller.signal,
+  });
+  assert.equal(result.report.mode, 'quick');
+  const parsed = JSON.parse(fs.readFileSync(result.jsonPath, 'utf8'));
+  assert.equal(parsed.mode, 'quick', 'a quick report says so in its JSON — readers must not have to guess "full"');
+  assert.equal(parsed.runId, 'mode-scan-quick');
+});
+
 test('runHardScan: aborting the token mid-screening pauses exactly like Q/Ctrl+C', { timeout: 60000 }, async () => {
   const ranges = ['10.0.0.0/22'];
   const settings = createDefaultSettings('linux');

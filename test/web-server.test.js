@@ -826,6 +826,127 @@ test("run lifecycle: start, 409 while active, strict event sequence, stop, pause
   }
 });
 
+test("calibration hunt: SSE counters frames and the snapshot carry hunt:true during the hunt, then clear (0.9.2 D4)", async () => {
+  const blackholeSockets = new Set();
+  const blackhole = net.createServer((socket) => {
+    blackholeSockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => blackholeSockets.delete(socket));
+  });
+  await new Promise((resolve) => blackhole.listen(18443, "0.0.0.0", resolve));
+  const ranges = [];
+  for (let i = 0; i < 300; i += 1) ranges.push(`127.${(i >> 8) & 255}.${i & 255}.0/24`);
+  const { layout } = makeLayout({ rangesText: `${ranges.join("\n")}\n` });
+  writeSecretFile(
+    layout.secretFile,
+    `vless://${TEST_UUID}@edge.example.com:18443?encryption=none&security=none&type=ws&host=edge.example.com&path=%2Fws#test`,
+  );
+  // Calibration stays ENABLED — the opposite of the lifecycle tests.
+  // Every candidate is a blackhole, so the control hunt walks its
+  // whole pool (quick samples 16 candidates; the ladder never runs
+  // without a working control), each probe burning the shortened
+  // timeout: the hunt alone lasts ~6 s, long enough for several
+  // 1 Hz counters flushes to carry it.
+  const testSettings = loadSettings(layout.settingsFile);
+  testSettings.scan.timeoutMs = 400;
+  saveSettings(layout.settingsFile, testSettings);
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  const events = [];
+  let sse = null;
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    sse = http.get(
+      { host: "127.0.0.1", port, path: "/api/events?tail=1", headers: { cookie }, agent: false },
+      (res) => {
+        let buffer = "";
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const type = /event: (\S+)/.exec(frame)?.[1];
+            const dataLine = /data: (.*)/s.exec(frame)?.[1];
+            if (!type || !dataLine) continue;
+            events.push({ type, payload: JSON.parse(dataLine) });
+          }
+        });
+      },
+    );
+    sse.on("error", () => {});
+
+    const started = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/run",
+      headers: mutation(cookie),
+      body: JSON.stringify({ mode: "quick" }),
+    });
+    assert.equal(started.status, 200);
+
+    const snapshot = async () =>
+      JSON.parse((await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body);
+
+    // During the hunt the snapshot's counters say so — the flag the
+    // client reads to label the count as control probes, not levels.
+    let huntSnap = null;
+    for (let attempt = 0; attempt < 100 && !huntSnap; attempt += 1) {
+      const snap = await snapshot();
+      if (snap.run && snap.run.phase === "calibrating" && snap.run.counters.hunt === true) huntSnap = snap;
+      else await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(huntSnap, "the snapshot marks the calibrating counters as the hunt while it runs");
+    assert.ok(
+      huntSnap.run.counters.total > 6,
+      "the hunt counts more probes than the ladder has levels — the two must not be conflated",
+    );
+
+    // And at least one broadcast counters frame carries it — Proof's
+    // gate found 0 of 11 frames did before the fix.
+    let huntFrame = null;
+    for (let attempt = 0; attempt < 100 && !huntFrame; attempt += 1) {
+      huntFrame = events.find((event) => event.type === "counters" && event.payload.hunt === true) ?? null;
+      if (!huntFrame) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(huntFrame, "an SSE counters frame carries hunt:true during the hunt");
+    assert.equal(huntFrame.payload.total, huntSnap.run.counters.total);
+
+    // The hunt exhausts its dead pool, calibration records
+    // no_working_control, and screening begins: the flag clears and
+    // never comes back.
+    let screeningSnap = null;
+    for (let attempt = 0; attempt < 150 && !screeningSnap; attempt += 1) {
+      const snap = await snapshot();
+      if (snap.run && snap.run.phase === "screening") screeningSnap = snap;
+      else await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(screeningSnap, "the run moves past calibration into screening");
+    assert.equal(screeningSnap.run.counters.hunt, false);
+
+    const stopped = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/run/stop",
+      headers: mutation(cookie),
+      body: "{}",
+    });
+    assert.equal(stopped.status, 200);
+    let terminalSnap = null;
+    for (let attempt = 0; attempt < 150 && !terminalSnap; attempt += 1) {
+      const snap = await snapshot();
+      if (snap.run && snap.run.status !== "running") terminalSnap = snap;
+      else await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(terminalSnap, "the stopped run reaches a terminal state");
+    assert.equal(terminalSnap.run.status, "canceled");
+  } finally {
+    if (sse) sse.destroy();
+    await api.stop("test");
+    for (const socket of blackholeSockets) socket.destroy();
+    await new Promise((resolve) => blackhole.close(resolve));
+  }
+});
+
 test("scan-mode stop lifecycle: canceled event, snapshot agreement, second stop is a 400 (defect 7 regression)", async () => {
   const blackholeSockets = new Set();
   const blackhole = net.createServer((socket) => {
@@ -1242,5 +1363,87 @@ test("run failure: a run whose engine throws ends in run-state failed, with run.
     assert.equal(typeof payload.error, "string", "the failure reason rides the terminal event too");
   } finally {
     await api.stop("test");
+  }
+});
+
+test("hard stop → resume adopts the checkpoint runId: response, terminal state, report, results API and log all carry the original id", async () => {
+  const blackholeSockets = new Set();
+  const blackhole = net.createServer((socket) => {
+    blackholeSockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => blackholeSockets.delete(socket));
+  });
+  await new Promise((resolve) => blackhole.listen(18444, "0.0.0.0", resolve));
+  const ranges = [];
+  for (let i = 0; i < 300; i += 1) ranges.push(`127.${(i >> 8) & 255}.${i & 255}.0/24`);
+  const { layout } = makeLayout({ rangesText: `${ranges.join("\n")}\n` });
+  const testSettings = loadSettings(layout.settingsFile);
+  testSettings.calibration.enabled = false;
+  testSettings.scan.timeoutMs = 400;
+  saveSettings(layout.settingsFile, testSettings);
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const post = (requestPath, body) =>
+      rawRequest({ port, method: "POST", path: requestPath, headers: mutation(cookie), body: JSON.stringify(body) });
+    const snapshot = async () =>
+      JSON.parse((await rawRequest({ port, path: "/api/state", headers: authed(cookie) })).body);
+    const waitForPaused = async (runId) => {
+      for (let attempt = 0; attempt < 160; attempt += 1) {
+        const snap = await snapshot();
+        if (snap.run && snap.run.status === "paused-done" && snap.run.runId === runId) return snap;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error(`run ${runId} did not settle as paused-done`);
+    };
+
+    assert.equal(
+      (await post("/api/config", { uri: `vless://${TEST_UUID}@edge.example.com:18444?encryption=none&security=none&type=ws&host=edge.example.com&path=%2Fws#test` })).status,
+      200,
+    );
+    // First run: start Hard, stop it, let it settle as paused-done.
+    const started = await post("/api/run", { mode: "hard" });
+    assert.equal(started.status, 200);
+    const { runId: originalId } = JSON.parse(started.body);
+    assert.equal((await post("/api/run/stop", {})).status, 200);
+    await waitForPaused(originalId);
+
+    // Resume: the response must name the checkpoint's id — the run
+    // keeps its identity instead of minting a second one.
+    let resumed = null;
+    for (let attempt = 0; attempt < 40 && !resumed; attempt += 1) {
+      const res = await post("/api/run", { mode: "hard", resume: true });
+      if (res.status === 200) resumed = res;
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(resumed, "the resume start was accepted");
+    assert.equal(JSON.parse(resumed.body).runId, originalId, "the resumed run adopts the checkpoint runId");
+
+    // Stop the resumed run; the terminal state keeps the same id.
+    assert.equal((await post("/api/run/stop", {})).status, 200);
+    const terminal = await waitForPaused(originalId);
+    assert.equal(terminal.run.runId, originalId);
+
+    // The report is filed under that one id and the results API
+    // serves it — the pre-fix split (snapshot id ≠ report id) 404'd.
+    const resultRes = await rawRequest({ port, path: `/api/results/${originalId}`, headers: authed(cookie) });
+    assert.equal(resultRes.status, 200, "the terminal snapshot's id resolves to its report");
+    assert.equal(JSON.parse(resultRes.body).runId, originalId);
+
+    // And the resumed run's records live in the original run's log
+    // file, under the original envelope id — one run, one story.
+    const records = fs
+      .readFileSync(path.join(layout.logs, `run-${originalId}.ndjson`), "utf8")
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line));
+    const resumeStart = records.find((record) => record.event === "run.start" && record.resume === true);
+    assert.ok(resumeStart, "the resumed run's run.start is in the original run's log file");
+    assert.equal(resumeStart.runId, originalId);
+    assert.equal(records.filter((record) => record.event === "run.start").length, 2, "both starts belong to the one run id");
+  } finally {
+    await api.stop("test");
+    for (const socket of blackholeSockets) socket.destroy();
+    await new Promise((resolve) => blackhole.close(resolve));
   }
 });

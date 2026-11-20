@@ -17,7 +17,7 @@ import { loadSettings } from "../config/settings.js";
 import { readSecretFile } from "../platform/paths.js";
 import { locateXray } from "../platform/xray.js";
 import { runScan } from "../scan.js";
-import { runHardScan, hasHardScanState } from "../hard-scan.js";
+import { runHardScan, hasHardScanState, readHardCheckpointRunId } from "../hard-scan.js";
 import { quickProfile, researchProfile } from "../menu/index.js";
 
 export const RUN_MODES = ["quick", "full", "research", "hard"];
@@ -69,9 +69,22 @@ export function createRunManager({ layout, state, webLog }) {
       throw codedError("no_resume", "No paused hard scan was found.");
     }
 
+    // A resumed Hard run adopts its checkpoint's runId: the engine
+    // files the report under the checkpoint's id (its state carries
+    // it), so a fresh logger id would split one run into two
+    // identities — the terminal snapshot naming an id no report
+    // answers to, and the resumed run's records landing in a second
+    // log file. Adopting it keeps the log records, the terminal
+    // state and the report on the run's one id.
+    const adoptedRunId =
+      mode === "hard" && resume ? readHardCheckpointRunId(layout) : null;
     // Bootstrap logger before settings load, exactly like the menu:
     // a settings failure is then on record in the run's own log.
-    const logger = createLogger({ level: "info", directory: layout.logs });
+    const logger = createLogger({
+      level: "info",
+      directory: layout.logs,
+      ...(adoptedRunId ? { runId: adoptedRunId } : {}),
+    });
     let settings;
     try {
       settings = loadSettings(layout.settingsFile, { logger });
@@ -126,6 +139,7 @@ export function createRunManager({ layout, state, webLog }) {
             layout,
             logger,
             runId,
+            mode,
             onProgress,
             signal: controller.signal,
           });
