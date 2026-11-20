@@ -20,6 +20,17 @@ const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (n) => (n == null || !Number.isFinite(n) ? "–" : Math.round(n).toLocaleString("en-US"));
 const fmt2 = (n) => (n == null || !Number.isFinite(n) ? "–" : (Math.round(n * 100) / 100).toString());
+/* Results display rules: a results number is the report's own value,
+   formatted — never recomputed, never rounded past the engine's
+   precision. Scores leave the engine at one decimal (f1), sustained
+   Mbps at two (f2), RPM at one (f1); millisecond figures carry at
+   most two decimals and print trimmed (fTrim). The Wilson lower
+   bound is read from the report's own percent field
+   (scores.reliabilityLower95), never re-derived from the fraction. */
+const f1 = (n) => (n == null || !Number.isFinite(n) ? "–" : n.toFixed(1));
+const f2 = (n) => (n == null || !Number.isFinite(n) ? "–" : n.toFixed(2));
+const fTrim = (n) => (n == null || !Number.isFinite(n) ? "–" : String(Math.round(n * 100) / 100));
+const pct1 = (frac) => (frac == null || !Number.isFinite(frac) ? "–" : (Math.round(frac * 1000) / 10).toFixed(1) + "%");
 const pct = (x) => (x == null || !Number.isFinite(x) ? "–" : Math.round(x * 100) + "%");
 const mmss = (ms) => { const s = Math.floor((ms || 0) / 1000); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
 const D = (x) => `<bdi class="d mono">${esc(x)}</bdi>`; // bidi-isolated data span
@@ -133,6 +144,24 @@ en: {
   "res.empty": "No results yet. Run a scan and the rankings will appear here.",
   "col.rank": "#", "col.ip": "IP", "col.verdict": "Verdict", "col.cons": "Cons.", "col.raw": "Raw", "col.overall": "Overall",
   "col.elig": "Eligibility", "col.mbps": "Mbps", "col.rpm": "RPM", "col.pop": "POP", "col.gate": "Gate", "col.why": "Why",
+  "col.parts": "Score parts",
+  "comp.web": "Web", "comp.streaming": "Streaming", "comp.load": "Real load", "comp.reliability": "Reliability",
+  "verdict.recommended": "Recommended", "verdict.good": "Good", "verdict.usable": "Usable", "verdict.browsing-only": "Browsing only", "verdict.unverified": "Unverified", "verdict.unusable": "Unusable",
+  "gate.pass": "Passed", "gate.warn": "Warning", "gate.fail": "Failed", "gate.unknown": "Unknown",
+  "ms.complete": "complete", "ms.partial": "partial", "ms.incomplete": "incomplete", "ms.unmeasured": "unmeasured",
+  "conf.provisional": "provisional", "conf.low": "low", "conf.medium": "medium", "conf.high": "high",
+  "limit.sustainedMbps": "sustained download speed", "limit.shapingRatio": "speed fading over the run", "limit.rpm": "responsiveness under load", "limit.rttIncreaseMs": "added delay under load", "limit.rttInflation": "delay growing under load", "limit.jitterMs": "jitter — uneven timing", "limit.lossRate": "requests lost under load", "limit.fanoutSuccess": "parallel requests failing", "limit.freshConnectionMs": "slow fresh connections", "limit.uplinkMbps": "sustained upload speed",
+  "res.scope": "Scores are run-relative: they rank these candidates against each other inside this run — they are not grades against the whole internet.",
+  "res.legend": "Complete means every stage was measured. Partial means some stages are missing, and a partial score is capped at 70.",
+  "res.top": "Top of this run", "res.notMeasured": "not measured",
+  "det.eligibility": "Eligibility", "det.scores": "Scores", "det.load": "Real load", "det.streaming": "Streaming", "det.gates": "Gates", "det.measurement": "Measurement",
+  "det.success": "Successful probes", "det.rate": "Success rate", "det.lower95": "Wilson lower bound · 95%", "det.median": "Median handshake", "det.confidence": "Confidence",
+  "det.overall": "Overall", "det.rawOverall": "Overall before caps", "det.cons": "Conservative", "det.rawCons": "Conservative before caps",
+  "det.sustained": "Sustained", "det.rpm": "Responsiveness (RPM)", "det.shaping": "Shaping ratio", "det.addedRtt": "Added RTT",
+  "det.sustainable": "Sustainable", "det.quality": "Quality",
+  "det.status": "Gate status", "det.limiting": "Limiting factor", "det.verdict": "The engine's words",
+  "det.mstatus": "Measurement", "det.bytes": "Traffic measured", "det.qoe": "QoE confidence",
+  "unit.ms": "ms", "unit.mbps": "Mbps",
   "rep.title": "Reports archive", "rep.sub": "Every saved run. Opening one reads it into the results view.",
   "rep.empty": "No saved reports yet.", "col.run": "Run", "col.mode": "Mode", "col.when": "Finished", "col.size": "Size", "col.open": "",
   "set.title": "Scan settings", "set.sub": "The full settings tree. The web form writes through the same merge-and-migrate path as the terminal editor; the server is the authority, this form only presents.",
@@ -243,6 +272,24 @@ fa: {
   "res.empty": "هنوز نتیجه‌ای نیست. یک اسکن اجرا کنید تا رتبه‌بندی اینجا ظاهر شود.",
   "col.rank": "#", "col.ip": "آی‌پی", "col.verdict": "حکم", "col.cons": "محافظه‌کار", "col.raw": "خام", "col.overall": "کلی",
   "col.elig": "صلاحیت", "col.mbps": "Mbps", "col.rpm": "RPM", "col.pop": "POP", "col.gate": "گیت", "col.why": "چرا",
+  "col.parts": "اجزای امتیاز",
+  "comp.web": "وب", "comp.streaming": "استریمینگ", "comp.load": "بار واقعی", "comp.reliability": "پایایی",
+  "verdict.recommended": "پیشنهادشده", "verdict.good": "خوب", "verdict.usable": "قابل استفاده", "verdict.browsing-only": "فقط وب‌گردی", "verdict.unverified": "تأییدنشده", "verdict.unusable": "غیرقابل استفاده",
+  "gate.pass": "قبول", "gate.warn": "قبول با هشدار", "gate.fail": "رد", "gate.unknown": "نامشخص",
+  "ms.complete": "کامل", "ms.partial": "ناقص", "ms.incomplete": "ناتمام", "ms.unmeasured": "اندازه‌گیری‌نشده",
+  "conf.provisional": "موقتی", "conf.low": "کم", "conf.medium": "متوسط", "conf.high": "زیاد",
+  "limit.sustainedMbps": "سرعت دانلود پایدار", "limit.shapingRatio": "افت سرعت در طول اجرا", "limit.rpm": "پاسخ‌گویی زیر بار", "limit.rttIncreaseMs": "تأخیر اضافه زیر بار", "limit.rttInflation": "رشد تأخیر زیر بار", "limit.jitterMs": "جیتر — نوسان زمان‌بندی", "limit.lossRate": "درخواست‌های گم‌شده زیر بار", "limit.fanoutSuccess": "خطای درخواست‌های موازی", "limit.freshConnectionMs": "کندی اتصال‌های تازه", "limit.uplinkMbps": "سرعت آپلود پایدار",
+  "res.scope": "امتیازها نسبیِ همین اجرا هستند: کاندیدها را فقط با یکدیگر در همین اجرا مقایسه می‌کنند — نمره‌ای در برابر کل اینترنت نیستند.",
+  "res.legend": "کامل یعنی همه مراحل اندازه‌گیری شده‌اند. ناقص یعنی بعضی مراحل غایب‌اند و امتیاز ناقص سقف ۷۰ دارد.",
+  "res.top": "برترین این اجرا", "res.notMeasured": "اندازه‌گیری نشده",
+  "det.eligibility": "صلاحیت", "det.scores": "امتیازها", "det.load": "بار واقعی", "det.streaming": "استریمینگ", "det.gates": "گیت‌ها", "det.measurement": "اندازه‌گیری",
+  "det.success": "پروب‌های موفق", "det.rate": "نرخ موفقیت", "det.lower95": "کران پایین ویلسون · 95%", "det.median": "میانه هندشیک", "det.confidence": "اطمینان",
+  "det.overall": "کلی", "det.rawOverall": "کلی پیش از سقف", "det.cons": "محافظه‌کار", "det.rawCons": "محافظه‌کار پیش از سقف",
+  "det.sustained": "پایدار", "det.rpm": "پاسخ‌گویی (RPM)", "det.shaping": "نسبت شکل‌دهی", "det.addedRtt": "RTT اضافه",
+  "det.sustainable": "پایدار", "det.quality": "کیفیت",
+  "det.status": "وضعیت گیت", "det.limiting": "عامل محدودکننده", "det.verdict": "حکم موتور",
+  "det.mstatus": "وضعیت اندازه‌گیری", "det.bytes": "ترافیک اندازه‌گیری‌شده", "det.qoe": "اطمینان QoE",
+  "unit.ms": "ms", "unit.mbps": "Mbps",
   "rep.title": "بایگانی گزارش‌ها", "rep.sub": "همهٔ اجراهای ذخیره‌شده. باز کردن هرکدام، آن را در نمای نتایج می‌خواند.",
   "rep.empty": "هنوز گزارش ذخیره‌شده‌ای نیست.", "col.run": "اجرا", "col.mode": "حالت", "col.when": "پایان", "col.size": "حجم", "col.open": "",
   "set.title": "تنظیمات اسکن", "set.sub": "کل درخت تنظیمات. فرم وب از همان مسیر ادغام و مهاجرت ویرایشگر ترمینال می‌نویسد؛ مرجع نهایی سرور است و این فرم فقط ارائه می‌کند.",
@@ -761,15 +808,82 @@ function journalText(type, d) {
   if (type === "log") { const k = EV_KEYS[d.event]; if (!k) return null; if (d.event.endsWith("no_control")) return d.n != null ? t(k, { n: fmt(d.n) }) : t(k + ".plain"); return t(k); }
   return null;
 }
-function resultsTable(rows, compact) {
-  const head = `<tr><th class="num">${t("col.rank")}</th><th>${t("col.ip")}</th><th>${t("col.verdict")}</th><th class="num">${t("col.cons")}</th>${compact ? "" : `<th class="num">${t("col.raw")}</th><th class="num">${t("col.overall")}</th>`}<th>${t("col.elig")}</th><th class="num">${t("col.mbps")}</th><th class="num">${t("col.rpm")}</th><th>${t("col.pop")}</th><th>${t("col.gate")}</th>${compact ? "" : `<th>${t("col.why")}</th>`}</tr>`;
-  const body = rows.map((r, i) => `<tr class="${i === 0 ? "best" : ""} clickable" data-i="${i}">
-    <td class="num">${i + 1}</td><td>${i === 0 ? '<span class="tick-a">▸</span> ' : ""}${D(r.ip)}</td><td>${esc(r.verdict?.label || r.measurement?.status || "")}</td>
-    <td class="num">${r.scores?.conservative ?? "–"}</td>${compact ? "" : `<td class="num">${r.scores?.conservativeUncapped ?? "–"}</td><td class="num">${r.scores?.overall ?? "–"}</td>`}
-    <td>${D((r.eligibility?.successes ?? "–") + "/" + (r.eligibility?.attempts ?? "–"))} <span class="dim">↓${fmt2(r.eligibility?.confidence95?.lower)}</span></td>
-    <td class="num">${r.load?.sustainedMbps ?? "–"}</td><td class="num">${r.load?.rpm ?? "–"}</td><td>${esc(r.eligibility?.pops?.dominant || "–")}</td>
-    <td>${esc(r.gates?.status || "–")}</td>${compact ? "" : `<td>${esc(r.gates?.limiting || r.measurement?.status || "")}</td>`}</tr>`).join("");
-  return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+/* Plain words for the report's coded values: the results surface
+   speaks the reader's language, in both languages. The raw codes
+   stay in the JSON download, one click away — never on the table. */
+const word = (prefix, value) => (value && STR[lang] && STR[lang][prefix + value] ? t(prefix + value) : null);
+const verdictWord = (r) => word("verdict.", r.verdict?.label) || r.verdict?.label || word("ms.", r.measurement?.status) || r.measurement?.status || "–";
+const gateWord = (s) => word("gate.", s) || s || "–";
+const statusWord = (s) => word("ms.", s) || s || "–";
+const confWord = (c) => word("conf.", c) || c || "–";
+const limitingWord = (r) => word("limit.", r.gates?.limiting) || r.limitingFactor || r.gates?.limiting || statusWord(r.measurement?.status);
+/* The four weighted components, typeset as one strip: a micro-label
+   per stage (Web · Streaming · Load · Reliability) over the report's
+   own one-decimal scores. Missing stages show the honest dash. */
+function partsCell(r) {
+  const s = r.scores || {};
+  const cells = [["W", "comp.web", s.browsing], ["S", "comp.streaming", s.streaming], ["L", "comp.load", s.load], ["R", "comp.reliability", s.reliability]];
+  return `<span class="parts" dir="ltr">${cells.map(([k, key, v]) => `<span class="part" title="${esc(t(key))}"><i>${k}</i>${f1(v)}</span>`).join("")}</span>`;
+}
+const lower95Of = (r) => (r.scores?.reliabilityLower95 == null ? "–" : f1(r.scores.reliabilityLower95) + "%");
+/* The results table. Row order IS the report's order — the report
+   builder ranks (complete above partial, then its score order) and
+   this view never re-sorts; rank numbers are the rows' positions in
+   the full ranking, passed in as `ranks` when a filtered subset is
+   shown, so a subset can never crown its own first row as #1. */
+function resultsTable(rows, compact, ranks) {
+  const rk = ranks || rows.map((_, i) => i + 1);
+  const head = `<tr><th class="num">${t("col.rank")}</th><th>${t("col.ip")}</th><th>${t("col.verdict")}</th><th class="num">${t("col.cons")}</th><th>${t("col.parts")}</th>${compact ? "" : `<th class="num">${t("col.raw")}</th><th class="num">${t("col.overall")}</th>`}<th>${t("col.elig")}</th><th class="num">${t("col.mbps")}</th><th class="num">${t("col.rpm")}</th><th>${t("col.pop")}</th><th>${t("col.gate")}</th>${compact ? "" : `<th>${t("col.why")}</th>`}</tr>`;
+  const body = rows.map((r, i) => {
+    const rank = rk[i], best = rank === 1;
+    return `<tr class="${best ? "best " : ""}clickable" data-i="${i}">
+    <td class="num">${best ? `<span class="rank-stamp">1</span>` : rank}</td><td>${best ? '<span class="tick-a">▸</span> ' : ""}${D(r.ip)}</td><td>${esc(verdictWord(r))}</td>
+    <td class="num score">${f1(r.scores?.conservative)}</td><td>${partsCell(r)}</td>${compact ? "" : `<td class="num dim">${f1(r.scores?.conservativeUncapped)}</td><td class="num">${f1(r.scores?.overall)}</td>`}
+    <td>${D((r.eligibility?.successes ?? "–") + "/" + (r.eligibility?.attempts ?? "–"))} <span class="dim">↓${lower95Of(r)}</span></td>
+    <td class="num">${f2(r.load?.sustainedMbps)}</td><td class="num">${f1(r.load?.rpm)}</td><td>${esc(r.eligibility?.pops?.dominant || "–")}</td>
+    <td>${esc(gateWord(r.gates?.status))}</td>${compact ? "" : `<td>${esc(limitingWord(r))}</td>`}</tr>`;
+  }).join("");
+  return `<div class="tbl-scroll"><table class="data ${compact ? "res-c" : "res-f"}"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
+/* The row expansion: a structured ledger, not a text dump. Every
+   value is the report's, under the same display rules as the table;
+   a stage the engine did not measure says so, in the reader's
+   language, instead of printing undefined-shaped noise. */
+function resultDetail(r) {
+  const s = r.scores || {}, e = r.eligibility || {}, g = r.gates || {}, m = r.measurement || {};
+  const withUnit = (txt, unit) => (txt === "–" ? "–" : txt + " " + unit);
+  const ms = (n) => withUnit(fTrim(n), t("unit.ms"));
+  const field = (label, value) => `<div class="dfield"><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
+  const sec = (title, inner) => `<section class="dsec"><h4>${esc(title)}</h4><div class="dgrid">${inner}</div></section>`;
+  const notMeasured = `<p class="dnote">${esc(t("res.notMeasured"))}</p>`;
+  const elig = sec(t("det.eligibility"),
+    field(t("det.success"), D((e.successes ?? "–") + "/" + (e.attempts ?? "–"))) +
+    field(t("det.rate"), D(pct1(e.successRate))) +
+    field(t("det.lower95"), D(lower95Of(r))) +
+    field(t("det.median"), D(ms(e.handshakeMedianMs))) +
+    field(t("det.confidence"), esc(confWord(e.confidence))));
+  const scores = sec(t("det.scores"),
+    field(t("comp.web"), f1(s.browsing)) + field(t("comp.streaming"), f1(s.streaming)) +
+    field(t("comp.load"), f1(s.load)) + field(t("comp.reliability"), f1(s.reliability)) +
+    field(t("det.overall"), f1(s.overall)) + field(t("det.rawOverall"), f1(s.overallUncapped)) +
+    field(t("det.cons"), f1(s.conservative)) + field(t("det.rawCons"), f1(s.conservativeUncapped)));
+  const loadSec = `<section class="dsec"><h4>${esc(t("det.load"))}</h4>${r.load ? `<div class="dgrid">` +
+    field(t("det.sustained"), D(withUnit(f2(r.load.sustainedMbps), t("unit.mbps")))) +
+    field(t("det.rpm"), f1(r.load.rpm)) +
+    field(t("det.shaping"), fTrim(r.load.shapingRatio)) +
+    field(t("det.addedRtt"), D(ms(r.load.rttIncreaseMs))) + `</div>` : notMeasured}</section>`;
+  const streamSec = `<section class="dsec"><h4>${esc(t("det.streaming"))}</h4>${r.streaming ? `<div class="dgrid">` +
+    field(t("det.sustainable"), D(withUnit(fTrim(r.streaming.sustainableMbps), t("unit.mbps")))) +
+    field(t("det.quality"), esc(r.streaming.quality || "–")) + `</div>` : notMeasured}</section>`;
+  const gates = `<section class="dsec"><h4>${esc(t("det.gates"))}</h4><div class="dgrid">` +
+    field(t("det.status"), esc(gateWord(g.status))) +
+    field(t("det.limiting"), esc(limitingWord(r))) + `</div>` +
+    (r.verdict?.summary ? `<p class="dnote">${esc(t("det.verdict"))}: ${esc(r.verdict.summary)}</p>` : "") + `</section>`;
+  const meas = sec(t("det.measurement"),
+    field(t("det.mstatus"), esc(statusWord(m.status))) +
+    field(t("det.bytes"), fmtBytes(m.bytesMeasured)) +
+    field(t("det.qoe"), esc(m.qoeConfidence || "–")));
+  return `<div class="detail">${elig}${scores}${loadSec}${streamSec}${gates}${meas}</div>`;
 }
 
 Views.dashboard = (el) => {
@@ -1082,24 +1196,19 @@ Views.results = (el, parts, q) => {
     const box = $("#res-body");
     if (!report || !report.results) { box.innerHTML = `<p class="empty">${esc(t("res.empty"))}</p>`; return; }
     const rows = block ? report.results.filter((r) => r.block === block) : report.results;
+    const ranks = rows.map((r) => report.results.indexOf(r) + 1);
     const dl = `<a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/download">${esc(t("ui.downloadJson"))}</a> <a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/best-ips">${esc(t("ui.downloadBest"))}</a>`;
     box.innerHTML = `
       <p class="view-sub">${esc(t("res.fromRun", { run: report.runId, mode: t("mode." + (report.mode || "full")), when: report.finishedAt || "" }))}</p>
-      <div class="kv"><span>${t("console.candidates")} <b>${fmt(report.totals?.candidates)}</b></span> · <span>${t("col.elig")} <b>${fmt(report.totals?.eligible)}</b></span> · <span>complete <b>${fmt(report.totals?.complete)}</b></span> · <span>partial <b>${fmt(report.totals?.partial)}</b></span><span style="margin-inline-start:auto">${dl}</span></div>
+      <div class="kv"><span>${t("console.candidates")} <b>${fmt(report.totals?.candidates)}</b></span> · <span>${t("col.elig")} <b>${fmt(report.totals?.eligible)}</b></span> · <span>${t("ms.complete")} <b>${fmt(report.totals?.complete)}</b></span> · <span>${t("ms.partial")} <b>${fmt(report.totals?.partial)}</b></span><span style="margin-inline-start:auto">${dl}</span></div>
+      ${!block && rows.length ? `<p class="best-line"><span class="tick-a">▸</span> ${esc(t("res.top"))}: ${D(rows[0].ip)} · ${esc(verdictWord(rows[0]))} · ${esc(t("col.cons"))} ${D(f1(rows[0].scores?.conservative))}</p>` : ""}
+      <p class="plain-note">${esc(t("res.scope"))} ${esc(t("res.legend"))}</p>
       ${block ? `<p class="plain-note">${esc(t("res.filterBlock", { block }))} · <a href="#/results?run=${encodeURIComponent(report.runId)}">${esc(t("res.clearFilter"))}</a></p>` : ""}
-      <div style="margin-top:10px">${resultsTable(rows, false)}</div>`;
+      <div style="margin-top:10px">${resultsTable(rows, false, ranks)}</div>`;
     $$("#res-body tr.clickable").forEach((tr) => tr.addEventListener("click", () => {
       if (tr.nextElementSibling && tr.nextElementSibling.classList.contains("detail-row")) { tr.nextElementSibling.remove(); return; }
       const r = rows[+tr.dataset.i]; if (!r) return;
-      const lines = [
-        `eligibility  ${r.eligibility?.successes}/${r.eligibility?.attempts} · rate ${r.eligibility?.successRate} · lower95 ${r.eligibility?.confidence95?.lower} · median ${r.eligibility?.handshakeMedianMs} ms · ${r.eligibility?.confidence} confidence`,
-        `scores       overall ${r.scores?.overall} (raw ${r.scores?.overallUncapped}) · conservative ${r.scores?.conservative} (raw ${r.scores?.conservativeUncapped})`,
-        `load         ${r.load ? r.load.sustainedMbps + " Mbps · " + r.load.rpm + " rpm · shaping " + r.load.shapingRatio + " · +RTT " + r.load.rttIncreaseMs + " ms" : "not measured"}`,
-        `streaming    ${r.streaming ? (r.streaming.sustainableMbps + " Mbps sustainable") : "not measured"}`,
-        `gates        ${r.gates?.status || "–"}${r.gates?.limiting ? " · limiting: " + r.gates.limiting : ""}`,
-        `measurement  ${r.measurement?.status} · ${fmtBytes(r.measurement?.bytesMeasured)} · ${r.measurement?.qoeConfidence || ""}`,
-      ].join("\n");
-      const d = document.createElement("tr"); d.className = "detail-row"; d.innerHTML = `<td colspan="12">${esc(lines)}</td>`;
+      const d = document.createElement("tr"); d.className = "detail-row"; d.innerHTML = `<td colspan="${tr.cells.length}">${resultDetail(r)}</td>`;
       tr.after(d);
     }));
   };
