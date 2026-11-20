@@ -1,1 +1,433 @@
-import{createHttpClient as e}from"../net/http.js";import{median as t,scoreLowerBetter as r,scoreHigherBetter as a,weightedScore as n,round as s}from"../stats.js";import{parseHlsManifest as l,simulateBuffer as i,estimateSustainableThroughput as o}from"./metrics.js";const u=1048576,m=12*u,d=65536;function c(e,{mode:t="fixed",targetMbps:r=6}={}){const a=e.slice().sort((e,t)=>(e.bandwidth||1/0)-(t.bandwidth||1/0));if(0===a.length)return null;if("lowest"===t||"abr"===t)return a[0];const n=1e6*r;return a.filter(e=>(e.averageBandwidth||e.bandwidth||1/0)<=n).at(-1)||a[0]}function f(e=[]){const t=e.map(e=>e.bandwidth||e.averageBandwidth).filter(e=>"number"==typeof e&&Number.isFinite(e)&&e>0);return 0===t.length?null:s(Math.max(...t)/1e6,3)}export function createStreamingBudget(e=12582912){const t=Math.max(0,Math.floor(Number(e)||0));let r=0;return{get limitBytes(){return t},get actualBytes(){return r},get remainingBytes(){return Math.max(0,t-r)},account(e){r+=Math.max(0,Math.floor(Number(e)||0))}}}async function g(e,t,r,a={}){if(t.remainingBytes<=d)return{url:r,ok:!1,error:"traffic_budget_exhausted",bytes:0,totalMs:0,ttfbMs:null};const n=Math.max(1,Math.floor(Number(a.maxBytes)||t.remainingBytes)),s=Math.max(1,Math.min(n,t.remainingBytes-d)),l=await e.request(r,{...a,maxBytes:s});return t.account(l.bytes),l}function b(e){return e?{Range:`bytes=${e}`}:void 0}async function y(e,t,r,a){if(!t?.url)return{ok:!0,totalMs:0,bytes:0};const n=`${t.url}|${t.byteRange||""}`;if(r.has(n))return r.get(n);const s=await g(e,a,t.url,{maxBytes:4*u,headers:b(t.byteRange)});return r.set(n,s),s}export async function probeStreaming({workload:l,proxy:m=null,timeoutMs:c=25e3,maxSegments:f=4,maxBytes:x=12582912,startupBufferSec:k=4,safetyFactor:B=1.25,variantMode:v="fixed",targetMbps:w=6,logger:S=null}){const _=e({proxy:m,timeoutMs:c}),U=createStreamingBudget(x);let R=0,N=null,$="number"==typeof l.ladderMaxMbps?l.ladderMaxMbps:null,q=null;const D=new Map;try{let e=[];if(Array.isArray(l.segmentUrls)&&l.segmentUrls.length>0)e=l.segmentUrls.map(e=>({url:e,durationSec:l.segmentDurationSec||4}));else{const t=function(e){const t=[];e.manifestUrl&&t.push(e.manifestUrl);for(const r of e.fallbackManifestUrls||[])r&&!t.includes(r)&&t.push(r);return t}(l);if(0===t.length)return h(l,"manifest_missing",R,U);let r="manifest_failed";for(const a of t){const t=await M({client:_,budget:U,manifestUrl:a,variantMode:v,targetMbps:w});if(R+=t.overheadMs,t.ok){e=t.segments,N=t.selectedVariant,q=a,t.ladderMaxMbps&&($=t.ladderMaxMbps);break}if(r=t.error,S?.debug("streaming.manifest.fallback",{manifestUrl:a,error:t.error}),"traffic_budget_exhausted"===r)break}if(0===e.length)return h(l,r,R,U)}if(0===e.length)return h(l,"no_segments",R,U);const m=[];for(const t of e.slice(0,f)){if(U.remainingBytes<=d)break;const e=await y(_,t.initMap,D,U),r=await y(_,t.key,D,U),a=t.initMap?.url?`accounted:${t.initMap.url}|${t.initMap.byteRange||""}`:null,n=t.key?.url?`accounted:${t.key.url}`:null;a&&!D.has(a)&&(R+=e.totalMs||0,D.set(a,!0)),n&&!D.has(n)&&(R+=r.totalMs||0,D.set(n,!0));const l=e.ok&&r.ok,i=l?await g(_,U,t.url,{maxBytes:16*u,headers:b(t.byteRange)}):{ok:!1,totalMs:0,bytes:0,error:e.error||r.error||"prerequisite_failed"};S?.debug("streaming.segment",{ok:i.ok,bytes:i.bytes,totalMs:i.totalMs,range:t.byteRange,discontinuity:t.discontinuity});const o=Boolean(i.ok&&l&&i.bytes>0),c=Math.max(i.totalMs||0,1)/1e3;if(m.push({...t,ok:o,downloadMs:i.totalMs||0,ttfbMs:i.ttfbMs??null,bytes:o?i.bytes:0,mbps:o?s(8*i.bytes/c/1e6,3):null,error:o?null:i.error||"segment_failed"}),"traffic_budget_exhausted"===i.error)break}const c=m.filter(e=>e.ok),x=m.length?c.length/m.length:0,C=c.map(e=>e.mbps),F=i(m,k,R),j=o(C,B),A=n([{score:x,weight:35},{score:r(F.startupDelaySec,.8,8),weight:15},{score:r(F.rebufferRatio,.005,.25),weight:30},{score:a(j.value??NaN,6,.4),weight:20}],{requireAll:!0}),V=F.playbackStarted?A:null,L=p(j.value,$),O="number"==typeof j.value&&"number"==typeof $&&j.value>$,K=F.playbackStarted?null:0===m.length&&U.remainingBytes<=d?"traffic_budget_exhausted":0===c.length?m.find(e=>e.error)?.error||"all_segments_failed":"playback_not_started";return{workload:l.name,manifestUrl:q||l.manifestUrl||null,segments:m.length,sampleCount:C.length,successRate:s(x,3),medianMbps:s(t(C),3),p10Mbps:j.p10,sustainableMbps:j.value,estimator:j.estimator,estimatorConfidence:j.confidence,ladderMaxMbps:$,ladderLimited:O,quality:L,startupDelaySec:F.startupDelaySec,startupOverheadMs:s(R,2),playbackStarted:F.playbackStarted,stalls:F.stalls,stallSec:F.stallSec,rebufferRatio:F.rebufferRatio,variantMode:v,selectedVariant:N,bytes:U.actualBytes,budget:{maxBytes:U.limitBytes,remainingBytes:U.remainingBytes,exhausted:U.remainingBytes<=d},score:V,error:K,detail:m}}finally{_.close()}}async function M({client:e,budget:t,manifestUrl:r,variantMode:a,targetMbps:n}){let s=0;const i=await g(e,t,r,{captureBody:!0,maxBytes:u});if(s+=i.totalMs||0,!i.ok)return{ok:!1,error:i.error||"manifest_failed",overheadMs:s,segments:[]};let o=l(i.body.toString("utf8"),r),m=null,d=null;if(o.isMaster){if(m=f(o.variants),d=c(o.variants,{mode:a,targetMbps:n}),!d)return{ok:!1,error:"variant_missing",overheadMs:s,segments:[]};const r=await g(e,t,d.url,{captureBody:!0,maxBytes:u});if(s+=r.totalMs||0,!r.ok)return{ok:!1,error:r.error||"variant_failed",overheadMs:s,segments:[]};o=l(r.body.toString("utf8"),d.url)}return o.segments&&0!==o.segments.length?{ok:!0,error:null,overheadMs:s,segments:o.segments,selectedVariant:d,ladderMaxMbps:m}:{ok:!1,error:"no_segments",overheadMs:s,segments:[]}}function p(e,t=null){if(!Number.isFinite(e))return null;const r="number"==typeof t&&Number.isFinite(t)&&t>0?Math.min(e,t):e;return r>=15?"4K":r>=6?"1080p":r>=3?"720p":r>=1?"480p":"360p"}function h(e,t,r=0,a=createStreamingBudget()){return{workload:e.name,manifestUrl:e.manifestUrl||null,segments:0,sampleCount:0,successRate:0,medianMbps:null,p10Mbps:null,sustainableMbps:null,estimator:"none",estimatorConfidence:"none",ladderMaxMbps:e.ladderMaxMbps??null,ladderLimited:!1,quality:null,startupDelaySec:s(r/1e3,3),startupOverheadMs:s(r,2),playbackStarted:!1,stalls:0,stallSec:0,rebufferRatio:null,bytes:a.actualBytes,budget:{maxBytes:a.limitBytes,remainingBytes:a.remainingBytes,exhausted:a.remainingBytes<=d},score:null,error:t,detail:[]}}export{l as parseHlsManifest,i as simulateBuffer,c as chooseVariant,p as qualityLabel,f as ladderCeilingMbps,m as DEFAULT_STREAMING_MAX_BYTES};
+import { createHttpClient } from "../net/http.js";
+import {
+  median,
+  scoreLowerBetter,
+  scoreHigherBetter,
+  weightedScore,
+  round,
+} from "../stats.js";
+import {
+  parseHlsManifest,
+  simulateBuffer,
+  estimateSustainableThroughput,
+} from "./metrics.js";
+const MIB = 1048576;
+const DEFAULT_STREAMING_MAX_BYTES = 12 * MIB;
+// Requests stop once the remaining budget reaches this reserve, so a probe
+// never spends its very last bytes on a partial fetch.
+const BUDGET_RESERVE_BYTES = 65536;
+function chooseVariant(variants, { mode = "fixed", targetMbps = 6 } = {}) {
+  const sorted = variants
+    .slice()
+    .sort((a, b) => (a.bandwidth || Infinity) - (b.bandwidth || Infinity));
+  if (0 === sorted.length) return null;
+  if ("lowest" === mode || "abr" === mode) return sorted[0];
+  const targetBps = 1e6 * targetMbps;
+  return (
+    sorted
+      .filter(
+        (variant) =>
+          (variant.averageBandwidth || variant.bandwidth || Infinity) <=
+          targetBps,
+      )
+      .at(-1) || sorted[0]
+  );
+}
+function ladderCeilingMbps(variants = []) {
+  const values = variants
+    .map((variant) => variant.bandwidth || variant.averageBandwidth)
+    .filter(
+      (value) => "number" == typeof value && Number.isFinite(value) && value > 0,
+    );
+  return 0 === values.length ? null : round(Math.max(...values) / 1e6, 3);
+}
+export function createStreamingBudget(limit = 12582912) {
+  const limitBytes = Math.max(0, Math.floor(Number(limit) || 0));
+  let actualBytes = 0;
+  return {
+    get limitBytes() {
+      return limitBytes;
+    },
+    get actualBytes() {
+      return actualBytes;
+    },
+    get remainingBytes() {
+      return Math.max(0, limitBytes - actualBytes);
+    },
+    account(bytes) {
+      actualBytes += Math.max(0, Math.floor(Number(bytes) || 0));
+    },
+  };
+}
+// One HTTP request charged against the streaming budget; the per-request cap
+// is clamped so the reserve always stays unspent.
+async function requestWithinBudget(client, budget, url, options = {}) {
+  if (budget.remainingBytes <= BUDGET_RESERVE_BYTES)
+    return {
+      url,
+      ok: false,
+      error: "traffic_budget_exhausted",
+      bytes: 0,
+      totalMs: 0,
+      ttfbMs: null,
+    };
+  const requestedMax = Math.max(
+      1,
+      Math.floor(Number(options.maxBytes) || budget.remainingBytes),
+    ),
+    effectiveMax = Math.max(
+      1,
+      Math.min(requestedMax, budget.remainingBytes - BUDGET_RESERVE_BYTES),
+    ),
+    response = await client.request(url, { ...options, maxBytes: effectiveMax });
+  budget.account(response.bytes);
+  return response;
+}
+function rangeHeaders(byteRange) {
+  return byteRange ? { Range: `bytes=${byteRange}` } : void 0;
+}
+// Init segments and encryption keys are shared between media segments, so
+// each unique resource is fetched (and charged) only once per probe.
+async function fetchSharedResource(client, resource, cache, budget) {
+  if (!resource?.url) return { ok: true, totalMs: 0, bytes: 0 };
+  const cacheKey = `${resource.url}|${resource.byteRange || ""}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  const response = await requestWithinBudget(client, budget, resource.url, {
+    maxBytes: 4 * MIB,
+    headers: rangeHeaders(resource.byteRange),
+  });
+  cache.set(cacheKey, response);
+  return response;
+}
+export async function probeStreaming({
+  workload,
+  proxy = null,
+  timeoutMs = 25e3,
+  maxSegments = 4,
+  maxBytes = 12582912,
+  startupBufferSec = 4,
+  safetyFactor = 1.25,
+  variantMode = "fixed",
+  targetMbps = 6,
+  logger = null,
+}) {
+  const client = createHttpClient({ proxy, timeoutMs }),
+    budget = createStreamingBudget(maxBytes);
+  let startupOverheadMs = 0,
+    selectedVariant = null,
+    ladderMaxMbps =
+      "number" == typeof workload.ladderMaxMbps ? workload.ladderMaxMbps : null,
+    usedManifestUrl = null;
+  const sharedCache = new Map();
+  try {
+    let segments = [];
+    if (Array.isArray(workload.segmentUrls) && workload.segmentUrls.length > 0)
+      segments = workload.segmentUrls.map((url) => ({
+        url,
+        durationSec: workload.segmentDurationSec || 4,
+      }));
+    else {
+      const manifestUrls = (function (wl) {
+        const urls = [];
+        if (wl.manifestUrl) urls.push(wl.manifestUrl);
+        for (const fallback of wl.fallbackManifestUrls || [])
+          if (fallback && !urls.includes(fallback)) urls.push(fallback);
+        return urls;
+      })(workload);
+      if (0 === manifestUrls.length)
+        return emptyStreamingResult(
+          workload,
+          "manifest_missing",
+          startupOverheadMs,
+          budget,
+        );
+      let lastError = "manifest_failed";
+      for (const manifestUrl of manifestUrls) {
+        const attempt = await fetchManifestSegments({
+          client,
+          budget,
+          manifestUrl,
+          variantMode,
+          targetMbps,
+        });
+        startupOverheadMs += attempt.overheadMs;
+        if (attempt.ok) {
+          segments = attempt.segments;
+          selectedVariant = attempt.selectedVariant;
+          usedManifestUrl = manifestUrl;
+          if (attempt.ladderMaxMbps) ladderMaxMbps = attempt.ladderMaxMbps;
+          break;
+        }
+        lastError = attempt.error;
+        logger?.debug("streaming.manifest.fallback", {
+          manifestUrl,
+          error: attempt.error,
+        });
+        if ("traffic_budget_exhausted" === lastError) break;
+      }
+      if (0 === segments.length)
+        return emptyStreamingResult(
+          workload,
+          lastError,
+          startupOverheadMs,
+          budget,
+        );
+    }
+    if (0 === segments.length)
+      return emptyStreamingResult(
+        workload,
+        "no_segments",
+        startupOverheadMs,
+        budget,
+      );
+    const results = [];
+    for (const segment of segments.slice(0, maxSegments)) {
+      if (budget.remainingBytes <= BUDGET_RESERVE_BYTES) break;
+      const initResult = await fetchSharedResource(
+          client,
+          segment.initMap,
+          sharedCache,
+          budget,
+        ),
+        keyResult = await fetchSharedResource(
+          client,
+          segment.key,
+          sharedCache,
+          budget,
+        ),
+        // Startup overhead counts each shared resource once, even when the
+        // resource fetch itself was already charged through the cache.
+        initMarker = segment.initMap?.url
+          ? `accounted:${segment.initMap.url}|${segment.initMap.byteRange || ""}`
+          : null,
+        keyMarker = segment.key?.url ? `accounted:${segment.key.url}` : null;
+      if (initMarker && !sharedCache.has(initMarker)) {
+        startupOverheadMs += initResult.totalMs || 0;
+        sharedCache.set(initMarker, true);
+      }
+      if (keyMarker && !sharedCache.has(keyMarker)) {
+        startupOverheadMs += keyResult.totalMs || 0;
+        sharedCache.set(keyMarker, true);
+      }
+      const prerequisitesOk = initResult.ok && keyResult.ok,
+        segmentResult = prerequisitesOk
+          ? await requestWithinBudget(client, budget, segment.url, {
+              maxBytes: 16 * MIB,
+              headers: rangeHeaders(segment.byteRange),
+            })
+          : {
+              ok: false,
+              totalMs: 0,
+              bytes: 0,
+              error:
+                initResult.error || keyResult.error || "prerequisite_failed",
+            };
+      logger?.debug("streaming.segment", {
+        ok: segmentResult.ok,
+        bytes: segmentResult.bytes,
+        totalMs: segmentResult.totalMs,
+        range: segment.byteRange,
+        discontinuity: segment.discontinuity,
+      });
+      const ok = Boolean(segmentResult.ok && prerequisitesOk && segmentResult.bytes > 0),
+        seconds = Math.max(segmentResult.totalMs || 0, 1) / 1e3;
+      results.push({
+        ...segment,
+        ok,
+        downloadMs: segmentResult.totalMs || 0,
+        ttfbMs: segmentResult.ttfbMs ?? null,
+        bytes: ok ? segmentResult.bytes : 0,
+        mbps: ok ? round((8 * segmentResult.bytes) / seconds / 1e6, 3) : null,
+        error: ok ? null : segmentResult.error || "segment_failed",
+      });
+      if ("traffic_budget_exhausted" === segmentResult.error) break;
+    }
+    const succeeded = results.filter((result) => result.ok),
+      successRate = results.length ? succeeded.length / results.length : 0,
+      throughputs = succeeded.map((result) => result.mbps),
+      playback = simulateBuffer(results, startupBufferSec, startupOverheadMs),
+      sustainable = estimateSustainableThroughput(throughputs, safetyFactor),
+      overallScore = weightedScore(
+        [
+          { score: successRate, weight: 35 },
+          { score: scoreLowerBetter(playback.startupDelaySec, 0.8, 8), weight: 15 },
+          { score: scoreLowerBetter(playback.rebufferRatio, 0.005, 0.25), weight: 30 },
+          { score: scoreHigherBetter(sustainable.value ?? NaN, 6, 0.4), weight: 20 },
+        ],
+        { requireAll: true },
+      ),
+      score = playback.playbackStarted ? overallScore : null,
+      quality = qualityLabel(sustainable.value, ladderMaxMbps),
+      ladderLimited =
+        "number" == typeof sustainable.value &&
+        "number" == typeof ladderMaxMbps &&
+        sustainable.value > ladderMaxMbps,
+      error = playback.playbackStarted
+        ? null
+        : 0 === results.length && budget.remainingBytes <= BUDGET_RESERVE_BYTES
+          ? "traffic_budget_exhausted"
+          : 0 === succeeded.length
+            ? results.find((result) => result.error)?.error ||
+              "all_segments_failed"
+            : "playback_not_started";
+    return {
+      workload: workload.name,
+      manifestUrl: usedManifestUrl || workload.manifestUrl || null,
+      segments: results.length,
+      sampleCount: throughputs.length,
+      successRate: round(successRate, 3),
+      medianMbps: round(median(throughputs), 3),
+      p10Mbps: sustainable.p10,
+      sustainableMbps: sustainable.value,
+      estimator: sustainable.estimator,
+      estimatorConfidence: sustainable.confidence,
+      ladderMaxMbps,
+      ladderLimited,
+      quality,
+      startupDelaySec: playback.startupDelaySec,
+      startupOverheadMs: round(startupOverheadMs, 2),
+      playbackStarted: playback.playbackStarted,
+      stalls: playback.stalls,
+      stallSec: playback.stallSec,
+      rebufferRatio: playback.rebufferRatio,
+      variantMode,
+      selectedVariant,
+      bytes: budget.actualBytes,
+      budget: {
+        maxBytes: budget.limitBytes,
+        remainingBytes: budget.remainingBytes,
+        exhausted: budget.remainingBytes <= BUDGET_RESERVE_BYTES,
+      },
+      score,
+      error,
+      detail: results,
+    };
+  } finally {
+    client.close();
+  }
+}
+async function fetchManifestSegments({
+  client,
+  budget,
+  manifestUrl,
+  variantMode,
+  targetMbps,
+}) {
+  let overheadMs = 0;
+  const manifestResponse = await requestWithinBudget(client, budget, manifestUrl, {
+    captureBody: true,
+    maxBytes: MIB,
+  });
+  overheadMs += manifestResponse.totalMs || 0;
+  if (!manifestResponse.ok)
+    return {
+      ok: false,
+      error: manifestResponse.error || "manifest_failed",
+      overheadMs,
+      segments: [],
+    };
+  let playlist = parseHlsManifest(
+      manifestResponse.body.toString("utf8"),
+      manifestUrl,
+    ),
+    ladderMaxMbps = null,
+    selectedVariant = null;
+  if (playlist.isMaster) {
+    ladderMaxMbps = ladderCeilingMbps(playlist.variants);
+    selectedVariant = chooseVariant(playlist.variants, {
+      mode: variantMode,
+      targetMbps,
+    });
+    if (!selectedVariant)
+      return { ok: false, error: "variant_missing", overheadMs, segments: [] };
+    const variantResponse = await requestWithinBudget(
+      client,
+      budget,
+      selectedVariant.url,
+      { captureBody: true, maxBytes: MIB },
+    );
+    overheadMs += variantResponse.totalMs || 0;
+    if (!variantResponse.ok)
+      return {
+        ok: false,
+        error: variantResponse.error || "variant_failed",
+        overheadMs,
+        segments: [],
+      };
+    playlist = parseHlsManifest(
+      variantResponse.body.toString("utf8"),
+      selectedVariant.url,
+    );
+  }
+  return playlist.segments && 0 !== playlist.segments.length
+    ? {
+        ok: true,
+        error: null,
+        overheadMs,
+        segments: playlist.segments,
+        selectedVariant,
+        ladderMaxMbps,
+      }
+    : { ok: false, error: "no_segments", overheadMs, segments: [] };
+}
+function qualityLabel(value, ladderMax = null) {
+  if (!Number.isFinite(value)) return null;
+  const capped =
+    "number" == typeof ladderMax && Number.isFinite(ladderMax) && ladderMax > 0
+      ? Math.min(value, ladderMax)
+      : value;
+  return capped >= 15
+    ? "4K"
+    : capped >= 6
+      ? "1080p"
+      : capped >= 3
+        ? "720p"
+        : capped >= 1
+          ? "480p"
+          : "360p";
+}
+function emptyStreamingResult(
+  workload,
+  error,
+  overheadMs = 0,
+  budget = createStreamingBudget(),
+) {
+  return {
+    workload: workload.name,
+    manifestUrl: workload.manifestUrl || null,
+    segments: 0,
+    sampleCount: 0,
+    successRate: 0,
+    medianMbps: null,
+    p10Mbps: null,
+    sustainableMbps: null,
+    estimator: "none",
+    estimatorConfidence: "none",
+    ladderMaxMbps: workload.ladderMaxMbps ?? null,
+    ladderLimited: false,
+    quality: null,
+    startupDelaySec: round(overheadMs / 1e3, 3),
+    startupOverheadMs: round(overheadMs, 2),
+    playbackStarted: false,
+    stalls: 0,
+    stallSec: 0,
+    rebufferRatio: null,
+    bytes: budget.actualBytes,
+    budget: {
+      maxBytes: budget.limitBytes,
+      remainingBytes: budget.remainingBytes,
+      exhausted: budget.remainingBytes <= BUDGET_RESERVE_BYTES,
+    },
+    score: null,
+    error,
+    detail: [],
+  };
+}
+export {
+  parseHlsManifest,
+  simulateBuffer,
+  chooseVariant,
+  qualityLabel,
+  ladderCeilingMbps,
+  DEFAULT_STREAMING_MAX_BYTES,
+};
