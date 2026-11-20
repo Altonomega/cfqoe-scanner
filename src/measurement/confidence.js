@@ -1,6 +1,11 @@
 import { round } from '../stats.js';
 
-export function wilsonInterval(successes, attempts, z = 1.959963984540054) {
+// The 95% standard-normal quantile behind every Wilson interval in the
+// codebase. Exported so allocation code (measurement/bandit.js) scales the
+// exact same constant instead of carrying a second copy of the literal.
+export const WILSON_Z = 1.959963984540054;
+
+export function wilsonInterval(successes, attempts, z = WILSON_Z) {
   const n = Math.max(0, Math.floor(Number(attempts)));
   const s = Math.max(0, Math.min(n, Math.floor(Number(successes))));
   if (n === 0) return { lower: 0, upper: 1, center: null, confidence: 0.95 };

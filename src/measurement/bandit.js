@@ -12,9 +12,7 @@
 // `successes` / `attempts` are the effective counts (this run plus any
 // decayed reputation prior); `probed` counts probes spent this run and is
 // what the per-block depth cap applies to.
-import { wilsonInterval } from './confidence.js';
-
-const WILSON_Z = 1.959963984540054;
+import { wilsonInterval, WILSON_Z } from './confidence.js';
 
 export const DEFAULT_EXPLORATION = 1;
 export const DEFAULT_WAVE_CHUNK = 4;
