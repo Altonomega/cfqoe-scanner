@@ -84,7 +84,7 @@ en: {
   "dash.status": "Status", "dash.runScan": "Run a scan", "dash.plateRest": "The plate, at rest",
   "dash.latest": "Latest result", "dash.noRuns": "No runs yet. The plate is blank.",
   "dash.fromRuns": "From your recorded runs: {alive} blocks known alive · {absent} known absent · {known} known in total.",
-  "dash.resumeLine": "Resume the paused Hard run — {phase}, {probes} probes spent.",
+  "dash.resumeLine": "Resume the paused Hard run — {phase}, {probes} probes spent.", "dash.resumePhaseAny": "an unspecified phase",
   "status.config": "config", "status.xray": "xray", "status.verify": "verify", "status.resume": "resume", "status.platform": "platform",
   "status.ready": "ready", "status.missing": "missing", "status.found": "found", "status.notFound": "not found",
   "status.sprt": "SPRT", "status.off": "off", "status.available": "available", "status.none": "none saved",
@@ -99,8 +99,9 @@ en: {
   "console.finished": "Run finished.", "console.viewResults": "See the results",
   "console.stopped": "Run stopped — the partial results are saved.", "console.journal": "Event journal",
   "console.idleHint": "No run is running. Start one here — its progress will appear on this page, live, as it happens.",
-  "op.starting": "Starting the run…", "op.calibrating": "Calibrating — testing your path to choose a safe speed. On a slow path this can take up to a minute.",
+  "op.starting": "Starting the run…", "op.calibrating": "Calibrating — testing your path to choose a safe speed. A slow or blocked path can take several minutes; the counter shows it working.",
   "op.calibratingLevel": "Calibrating — testing speed level {done} of {total} on your path.",
+  "op.calibratingHunt": "Calibrating — control probe {done} of {total}: looking for one that answers.",
   "op.screening": "Screening — round {round} of {rounds} · probing {ip} · {done} of {total} checks done",
   "op.screeningNoIp": "Screening — round {round} of {rounds} · {done} of {total} checks done",
   "op.delayed-retry": "Delayed retry — {total} silent candidates get one more chance · {done} of {total} done",
@@ -118,6 +119,15 @@ en: {
   "ev.verification.complete": "Verification finished", "ev.web.control.scan-stop": "Stop requested",
   "ev.tunnel.backfill": "A finalist slot was empty — the next candidate takes it",
   "ev.accept": "A finalist was accepted", "ev.reject": "A finalist was rejected", "ev.inconclusive": "A finalist stayed inconclusive — its screening evidence decides",
+  "ev.stage": "{stage} · {ip}", "ev.runComplete": "Run complete — {n} eligible IPs.",
+  "ev.runStopped": "Run stopped — progress is saved.", "ev.runFailed": "Run failed — see Diagnostics for the log.",
+  "ev.verifying": "Verifying finalists", "ev.verifyingDecision": "Verifying finalists — {decision}",
+  "ev.phaseComplete": "{phase} complete", "ev.primerAborted.dead-path": "Primer aborted — the path answers nothing",
+  "ev.primerAborted.hard-error": "Primer aborted — an engine error stopped it",
+  "ev.concurrency": "Concurrency {n} selected", "ev.delayedRetryNote": "Delayed retry of transient failures",
+  "ev.finalRanking": "Final QoE ranking", "ev.splitCoverage": "Split-coverage pass complete — {n} reserve probes spent",
+  "ev.expansionWave": "Expansion wave complete — {n} expansion probes spent",
+  "ev.primerPlan": "{blocks} blocks · skip {skip} · confirm {confirm} · full {full}",
   "phase.screening": "Screening", "phase.delayed-retry": "Delayed retry", "phase.verification": "Verification (SPRT)",
   "phase.tunnel": "Tunnel QoE", "phase.calibrating": "Calibrating",
   "phase.hard-primer": "Primers — origins of replication", "phase.hard-coverage": "Proofreading — checking uneven blocks",
@@ -161,7 +171,7 @@ en: {
   "limit.sustainedMbps": "sustained download speed", "limit.shapingRatio": "speed fading over the run", "limit.rpm": "responsiveness under load", "limit.rttIncreaseMs": "added delay under load", "limit.rttInflation": "delay growing under load", "limit.jitterMs": "jitter — uneven timing", "limit.lossRate": "requests lost under load", "limit.fanoutSuccess": "parallel requests failing", "limit.freshConnectionMs": "slow fresh connections", "limit.uplinkMbps": "sustained upload speed",
   "res.scope": "Scores are run-relative: they rank these candidates against each other inside this run — they are not grades against the whole internet.",
   "res.legend": "Complete means every stage was measured. Partial means some stages are missing, and a partial score is capped at 70.",
-  "res.top": "Top of this run", "res.notMeasured": "not measured",
+  "res.top": "Top of this run", "res.notMeasured": "not measured", "res.noneResponded": "{count} candidates — none responded.",
   "det.eligibility": "Eligibility", "det.scores": "Scores", "det.load": "Real load", "det.streaming": "Streaming", "det.gates": "Gates", "det.measurement": "Measurement",
   "det.success": "Successful probes", "det.rate": "Success rate", "det.lower95": "Wilson lower bound · 95%", "det.median": "Median handshake", "det.confidence": "Confidence",
   "det.overall": "Overall", "det.rawOverall": "Overall before caps", "det.cons": "Conservative", "det.rawCons": "Conservative before caps",
@@ -176,7 +186,7 @@ en: {
   "set.workloads": "Workloads", "set.customBrowsing": "Custom browsing page", "set.customStreaming": "Custom HLS stream",
   "set.name": "Name", "set.pageUrl": "Page URL", "set.manifestUrl": "Manifest URL (.m3u8)",
   "set.advanced": "Advanced", "set.estimate": "Estimated traffic per candidate: {bytes}",
-  "set.saved": "Settings saved.", "set.restored": "Default settings restored.", "set.invalid": "Some fields are not valid numbers — they are marked; nothing was saved.",
+  "set.saved": "Settings saved.", "set.restored": "Default settings restored.", "set.invalidList": "Nothing saved — these fields have invalid values: {fields}.",
   "set.simNote": "Validated by simulation — change with care.",
   "cfg.title": "VLESS configuration", "cfg.sub": "The stored configuration is managed by reference. The URI itself is never displayed, sent back, or logged — only this safe descriptor.",
   "cfg.stored": "A configuration is stored.", "cfg.notStored": "No configuration stored yet.",
@@ -220,7 +230,7 @@ fa: {
   "dash.status": "وضعیت", "dash.runScan": "شروع یک اسکن", "dash.plateRest": "پلیت، در حالت سکون",
   "dash.latest": "آخرین نتیجه", "dash.noRuns": "هنوز اجرایی انجام نشده است؛ پلیت خالی است.",
   "dash.fromRuns": "از اجراهای ثبت‌شدهٔ شما: {alive} بلاک زنده شناخته شده‌اند · {absent} بلاک غایب · در مجموع {known} بلاک شناخته‌شده.",
-  "dash.resumeLine": "ادامهٔ اجرای متوقف‌شدهٔ اسکن عمیق — مرحلهٔ {phase}، {probes} پروب مصرف شده است.",
+  "dash.resumeLine": "ادامهٔ اجرای متوقف‌شدهٔ اسکن عمیق — مرحلهٔ {phase}، {probes} پروب مصرف شده است.", "dash.resumePhaseAny": "نامشخص",
   "status.config": "پیکربندی", "status.xray": "xray", "status.verify": "راستی‌آزمایی", "status.resume": "ادامه", "status.platform": "پلتفرم",
   "status.ready": "آماده", "status.missing": "موجود نیست", "status.found": "پیدا شد", "status.notFound": "پیدا نشد",
   "status.sprt": "SPRT", "status.off": "خاموش", "status.available": "موجود است", "status.none": "ندارد",
@@ -235,8 +245,9 @@ fa: {
   "console.finished": "اجرا تمام شد.", "console.viewResults": "مشاهده نتایج",
   "console.stopped": "اجرا متوقف شد — نتایج جزئی ذخیره شدند.", "console.journal": "گزارش رویدادها",
   "console.idleHint": "هیچ اجرایی در حال انجام نیست. از همین‌جا شروع کنید — پیشرفتش زنده و لحظه‌به‌لحظه روی همین صفحه نمایش داده می‌شود.",
-  "op.starting": "در حال شروع اجرا…", "op.calibrating": "کالیبراسیون — مسیر شما آزموده می‌شود تا سرعت ایمن انتخاب شود. در مسیرهای کند ممکن است تا یک دقیقه طول بکشد.",
+  "op.starting": "در حال شروع اجرا…", "op.calibrating": "کالیبراسیون — مسیر شما آزموده می‌شود تا سرعت ایمن انتخاب شود. در مسیر کند یا بسته ممکن است چند دقیقه طول بکشد؛ شمارنده نشان می‌دهد کار در جریان است.",
   "op.calibratingLevel": "کالیبراسیون — پلهٔ سرعت {done} از {total} روی مسیر شما آزموده می‌شود.",
+  "op.calibratingHunt": "کالیبراسیون — پروب کنترلی {done} از {total}: در جست‌وجوی کاندیدای پاسخ‌گو.",
   "op.screening": "غربال — دور {round} از {rounds} · در حال آزمودن {ip} · {done} از {total} بررسی انجام شده",
   "op.screeningNoIp": "غربال — دور {round} از {rounds} · {done} از {total} بررسی انجام شده",
   "op.delayed-retry": "تلاش مجدد با تأخیر — به {total} کاندیدای بی‌پاسخ یک فرصت دیگر داده می‌شود · {done} از {total} انجام شده",
@@ -254,6 +265,15 @@ fa: {
   "ev.verification.complete": "راستی‌آزمایی تمام شد", "ev.web.control.scan-stop": "درخواست توقف داده شد",
   "ev.tunnel.backfill": "یک جای فینالیست خالی بود — کاندیدای بعدی جایش را می‌گیرد",
   "ev.accept": "یک فینالیست پذیرفته شد", "ev.reject": "یک فینالیست رد شد", "ev.inconclusive": "یک فینالیست نامشخص ماند — شواهد غربالش تصمیم می‌گیرد",
+  "ev.stage": "{stage} · {ip}", "ev.runComplete": "اجرا کامل شد — {n} آی‌پی واجد شرایط.",
+  "ev.runStopped": "اجرا متوقف شد — پیشرفت ذخیره شد.", "ev.runFailed": "اجرا ناموفق بود — لاگ را در عیب‌یابی ببینید.",
+  "ev.verifying": "راستی‌آزمایی فینالیست‌ها", "ev.verifyingDecision": "راستی‌آزمایی فینالیست‌ها — {decision}",
+  "ev.phaseComplete": "{phase} کامل شد", "ev.primerAborted.dead-path": "پرایمر متوقف شد — مسیر هیچ پاسخی نمی‌دهد",
+  "ev.primerAborted.hard-error": "پرایمر متوقف شد — خطای موتور آن را متوقف کرد",
+  "ev.concurrency": "سطح هم‌روندی {n} انتخاب شد", "ev.delayedRetryNote": "تلاش مجدد با تأخیر برای خطاهای گذرا",
+  "ev.finalRanking": "رتبه‌بندی نهایی کیفیت", "ev.splitCoverage": "گذر پوشش شکافت کامل شد — {n} پروب ذخیره مصرف شد",
+  "ev.expansionWave": "موج گسترش کامل شد — {n} پروب گسترش مصرف شد",
+  "ev.primerPlan": "{blocks} بلوک · پرش {skip} · تأیید {confirm} · کامل {full}",
   "phase.screening": "غربال", "phase.delayed-retry": "تلاش مجدد با تأخیر", "phase.verification": "راستی‌آزمایی (SPRT)",
   "phase.tunnel": "سنجش کیفیت تونل", "phase.calibrating": "کالیبراسیون",
   "phase.hard-primer": "پرایمرها — نقاط آغاز همانندسازی", "phase.hard-coverage": "تصحیح — بررسی بلاک‌های ناهموار",
@@ -297,7 +317,7 @@ fa: {
   "limit.sustainedMbps": "سرعت دانلود پایدار", "limit.shapingRatio": "افت سرعت در طول اجرا", "limit.rpm": "پاسخ‌گویی زیر بار", "limit.rttIncreaseMs": "تأخیر اضافه زیر بار", "limit.rttInflation": "رشد تأخیر زیر بار", "limit.jitterMs": "جیتر — نوسان زمان‌بندی", "limit.lossRate": "درخواست‌های گم‌شده زیر بار", "limit.fanoutSuccess": "خطای درخواست‌های موازی", "limit.freshConnectionMs": "کندی اتصال‌های تازه", "limit.uplinkMbps": "سرعت آپلود پایدار",
   "res.scope": "امتیازها نسبیِ همین اجرا هستند: کاندیدها را فقط با یکدیگر در همین اجرا مقایسه می‌کنند — نمره‌ای در برابر کل اینترنت نیستند.",
   "res.legend": "کامل یعنی همه مراحل اندازه‌گیری شده‌اند. ناقص یعنی بعضی مراحل غایب‌اند و امتیاز ناقص سقف ۷۰ دارد.",
-  "res.top": "برترین این اجرا", "res.notMeasured": "اندازه‌گیری نشده",
+  "res.top": "برترین این اجرا", "res.notMeasured": "اندازه‌گیری نشده", "res.noneResponded": "{count} کاندیدا — هیچ‌کدام پاسخ ندادند.",
   "det.eligibility": "صلاحیت", "det.scores": "امتیازها", "det.load": "بار واقعی", "det.streaming": "استریم", "det.gates": "گیت‌ها", "det.measurement": "اندازه‌گیری",
   "det.success": "پروب‌های موفق", "det.rate": "نرخ موفقیت", "det.lower95": "کران پایین ویلسون · ۹۵٪", "det.median": "میانه هندشیک", "det.confidence": "اطمینان",
   "det.overall": "کلی", "det.rawOverall": "کلی پیش از سقف", "det.cons": "محافظه‌کار", "det.rawCons": "محافظه‌کار پیش از سقف",
@@ -312,7 +332,7 @@ fa: {
   "set.workloads": "بارهای کاری", "set.customBrowsing": "صفحهٔ مرور سفارشی", "set.customStreaming": "استریم HLS سفارشی",
   "set.name": "نام", "set.pageUrl": "نشانی صفحه", "set.manifestUrl": "نشانی مانیفست (.m3u8)",
   "set.advanced": "پیشرفته", "set.estimate": "ترافیک تخمینی به‌ازای هر کاندیدا: {bytes}",
-  "set.saved": "تنظیمات ذخیره شد.", "set.restored": "تنظیمات پیش‌فرض بازگردانده شد.", "set.invalid": "برخی فیلدها عدد معتبر نیستند — علامت خوردند؛ چیزی ذخیره نشد.",
+  "set.saved": "تنظیمات ذخیره شد.", "set.restored": "تنظیمات پیش‌فرض بازگردانده شد.", "set.invalidList": "ذخیره نشد — این فیلدها مقدار نامعتبر دارند: {fields}.",
   "set.simNote": "با شبیه‌سازی اعتبارسنجی شده — با احتیاط تغییر دهید.",
   "cfg.title": "پیکربندی VLESS", "cfg.sub": "پیکربندی ذخیره‌شده با ارجاع مدیریت می‌شود. خود URI هیچ‌وقت نمایش داده نمی‌شود، برگردانده نمی‌شود و در لاگ ثبت نمی‌شود — فقط همین توصیف ایمن.",
   "cfg.stored": "یک پیکربندی ذخیره شده است.", "cfg.notStored": "هنوز پیکربندی‌ای ذخیره نشده است.",
@@ -427,7 +447,7 @@ const app = {
   stopping: false, offline: false, serverStopped: false, runStartedAtMs: 0, viewParts: [], runError: null,
   genome: null, // {state, heat, quads, quadHeat, known} Uint arrays, 7,697 cells
   tracePts: [], ticker: [], ledger: new Map(), lane: [], logs: [],
-  lastSeq: 0, view: null, viewName: "",
+  lastSeq: 0, view: null, viewName: "", _lastEventAt: 0,
   onConn(s) {
     this.conn = s;
     const pill = $("#conn-pill");
@@ -458,7 +478,7 @@ const app = {
     // carry that run as "running"; the terminal run-state event is
     // newer truth for the same runId and wins (backend truth is the
     // terminal status the state store now also serves at rest, so
-    // this guard only ever fires on the in-flight race).
+    // this guard only fires on the in-flight race).
     if (s.run && s.run.status === "running" && s.run.runId === this.runId && ["complete", "canceled", "failed", "paused-done"].includes(this.runStatus)) s.run = { ...s.run, status: this.runStatus };
     if (s.run) { this.runStatus = s.run.status; this.runMode = s.run.mode; this.runId = s.run.runId; this.phase = s.run.phase; this.counters = s.run.counters || {}; if (s.run.error) this.runError = s.run.error; if (s.run.status === "running") this.runError = null; const started = Date.parse(s.run.startedAt); if (Number.isFinite(started)) this.runStartedAtMs = started; }
     else { this.runStatus = s.status && s.status.resumeAvailable ? "paused-done" : this.runStatus === "complete" ? "complete" : "idle"; if (this.runStatus !== "running") this.stopping = false; }
@@ -466,6 +486,7 @@ const app = {
     if (this.view && this.view.onSnapshot) this.view.onSnapshot(s);
   },
   onEvent(type, d) {
+    this._lastEventAt = Date.now();
     if (d && d.seq) { if (this.lastSeq && d.seq > this.lastSeq + 1 && this.src.kind === "live") this.resync(); this.lastSeq = Math.max(this.lastSeq, d.seq); }
     if (type === "phase") { this.phase = d.phase; this.startedAt = d.startedAt || this.startedAt; }
     if (type === "counters") { this.counters = { ...this.counters, ...d }; }
@@ -502,11 +523,12 @@ const app = {
       return;
     }
     this._notesSig = sig; this._notesAt = now;
-    el.innerHTML = top.length ? top.map((x) => `<div>${esc(x)}</div>`).join("") : esc(t("run.idle"));
+    el.innerHTML = top.length ? top.map((x, i) => `<div${i === 0 && !prefs.calm ? ' class="note-in"' : ""}>${esc(tickerLine(x))}</div>`).join("") : esc(t("run.idle"));
+    el.classList.toggle("live", this.runStatus === "running");
   },
   // Elapsed time is read off the local clock, never off the last
   // counters frame: a quiet phase emits nothing for stretches, and a
-  // frozen clock is exactly what makes a live run look dead.
+  // frozen clock is what makes a live run look dead.
   elapsedMs() { return this.runStartedAtMs ? Math.max(0, Date.now() - this.runStartedAtMs) : (this.counters.elapsedMs || 0); },
   refreshChrome(force) {
     // Chrome is a summary, not a counter: events arrive per probe, so
@@ -820,9 +842,40 @@ async function stopRun() {
 const EV_KEYS = { "scan.start": "ev.scan.start", "scan.calibration": "ev.scan.calibration", "scan.calibration.no_control": "ev.scan.calibration.no_control", "hard.calibration": "ev.hard.calibration", "hard.calibration.no_control": "ev.hard.calibration.no_control", "scan.delayed_retry.start": "ev.scan.delayed_retry.start", "verification.start": "ev.verification.start", "verification.complete": "ev.verification.complete", "web.control.scan-stop": "ev.web.control.scan-stop", "tunnel.backfill": "ev.tunnel.backfill" };
 function journalText(type, d) {
   if (type === "phase") return t("ev.phase", { phase: t("phase." + d.phase) });
-  if (type === "ticker") { const word = { accept: "ev.accept", reject: "ev.reject", inconclusive: "ev.inconclusive" }[d.text]; return word ? t(word) : d.text; }
+  if (type === "ticker") return tickerLine(d.text);
   if (type === "log") { const k = EV_KEYS[d.event]; if (!k) return null; if (d.event.endsWith("no_control")) return d.n != null ? t(k, { n: fmt(d.n) }) : t(k + ".plain"); return t(k); }
   return null;
+}
+/* The engines narrate in fixed English line shapes (progress
+   notes + the run manager's terminal lines). Recognized shapes
+   are said in the reader's language; anything else — a bare IP,
+   an unknown note — passes through as the data it is. One mapping
+   for every surface: both journals, the ticker, the margin notes. */
+const TICKER_STAGES = { "web transfer": "comp.web", streaming: "comp.streaming", "real load": "comp.load" };
+function tickerLine(text) {
+  if (typeof text !== "string") return text;
+  const word = { accept: "ev.accept", reject: "ev.reject", inconclusive: "ev.inconclusive" }[text];
+  if (word) return t(word);
+  let m = text.match(/^(web transfer|streaming|real load) · (\S+)$/);
+  if (m) return t("ev.stage", { stage: t(TICKER_STAGES[m[1]]), ip: m[2] });
+  if (text === "Run stopped — progress is saved.") return t("ev.runStopped");
+  if (text === "Run failed — see Diagnostics for the log.") return t("ev.runFailed");
+  if ((m = text.match(/^Run complete — (\d+) eligible IPs\.$/))) return t("ev.runComplete", { n: fmt(+m[1]) });
+  if ((m = text.match(/^verifying finalists(?: \((accept|reject|inconclusive)\))?$/)))
+    return m[1] ? t("ev.verifyingDecision", { decision: t("ev." + m[1]) }) : t("ev.verifying");
+  if ((m = text.match(/^(\w+) phase complete$/))) {
+    const k = "phase.hard-" + m[1];
+    if (STR[lang] && STR[lang][k]) return t("ev.phaseComplete", { phase: t(k).split(" — ")[0] });
+  }
+  if ((m = text.match(/^primer aborted \((dead-path|hard-error)\)$/))) return t("ev.primerAborted." + m[1]);
+  if ((m = text.match(/^concurrency (\d+) selected$/))) return t("ev.concurrency", { n: fmt(+m[1]) });
+  if (text === "delayed retry of transient failures") return t("ev.delayedRetryNote");
+  if (text === "final QoE ranking") return t("ev.finalRanking");
+  if ((m = text.match(/^split-coverage pass complete; (\d+) reserve probes spent$/))) return t("ev.splitCoverage", { n: fmt(+m[1]) });
+  if ((m = text.match(/^expansion wave complete; (\d+) expansion probes spent$/))) return t("ev.expansionWave", { n: fmt(+m[1]) });
+  if ((m = text.match(/^(\d+) blocks · skip (\d+) · confirm (\d+) · full (\d+)$/)))
+    return t("ev.primerPlan", { blocks: fmt(+m[1]), skip: fmt(+m[2]), confirm: fmt(+m[3]), full: fmt(+m[4]) });
+  return text;
 }
 /* Plain words for the report's coded values: the results surface
    speaks the reader's language, in both languages. The raw codes
@@ -902,6 +955,42 @@ function resultDetail(r) {
   return `<div class="detail">${elig}${scores}${loadSec}${streamSec}${gates}${meas}</div>`;
 }
 
+/* At run end the ranked results render in the console itself —
+   the same payload and renderer as the Results view (compact),
+   once per run, for every terminal shape the mode knows. A
+   failed run renders only if a report was actually filed for it
+   (the fetch validates mode + runId against the live run). One
+   factory serves both consoles: no mode presents its results
+   worse than another. */
+function makeInlineResults(boxSel, mode, statuses) {
+  let renderedFor = null;
+  return async () => {
+    const box = $(boxSel);
+    const ended = app.runMode === mode && statuses.includes(app.runStatus);
+    if (!ended) { renderedFor = null; box.innerHTML = ""; return; }
+    const id = app.runId || "latest";
+    if (renderedFor === id) return;
+    const report = await app.src.getResults(id).catch(() => null);
+    if (!report || !report.results || (report.mode && report.mode !== mode) || (app.runId && report.runId !== app.runId)) return;
+    renderedFor = id;
+    const rows = report.results;
+    const none = !rows.length || rows.every((r) => r.measurement?.status === "unmeasured");
+    box.innerHTML = `<h3 class="sec-head">${esc(t("res.title"))}</h3>` + (none
+      ? `<p class="plain-note">${esc(t("res.noneResponded", { count: fmt(report.totals?.candidates ?? rows.length) }))}</p>`
+      : resultsTable(rows, true));
+  };
+}
+
+/* The resume line speaks from the snapshot's resume facts — the
+   checkpoint's stored phase and probe count — never live-run fields. */
+const resumeLineText = () => {
+  const s = app.state || {}, ri = s.resume || (s.status || {}).resume;
+  if (!ri) return "";
+  const bare = String(ri.phase || "").replace(/^hard-/, "");
+  const key = bare === "calibrating" ? "phase.calibrating" : ["primer", "coverage", "expansion", "retry", "verify", "finalize"].includes(bare) ? "phase.hard-" + bare : null;
+  return t("dash.resumeLine", { phase: key ? t(key) : t("dash.resumePhaseAny"), probes: fmt(ri.probesSpent || 0) });
+};
+
 Views.dashboard = (el) => {
   el.innerHTML = `
     <h2 class="view-title">${esc(t("nav.dashboard"))}</h2>
@@ -925,7 +1014,8 @@ Views.dashboard = (el) => {
   const update = () => {
     $("#d-status").innerHTML = statusKv(app.state);
     const st = (app.state || {}).status || {};
-    $("#d-resume").innerHTML = st.resumeAvailable ? `<p class="plain-note">${esc(t("dash.resumeLine", { phase: t("phase." + (app.phase || "hard-primer")), probes: fmt(app.counters.probesSpent || 0) }))} <button class="btn" id="d-resume-btn">${esc(t("ui.resume"))}</button></p>` : "";
+    const line = resumeLineText();
+    $("#d-resume").innerHTML = st.resumeAvailable ? `<p class="plain-note">${line ? esc(line) + " " : ""}<button class="btn" id="d-resume-btn">${esc(t("ui.resume"))}</button></p>` : "";
     const rb = $("#d-resume-btn"); if (rb) rb.addEventListener("click", () => startRun("hard", true));
     if (app.genome) {
       let alive = 0, absent = 0, known = 0;
@@ -960,7 +1050,7 @@ Views.genome = (el) => {
         <div class="budget-meter"><div id="g-budget-fill"></div></div>
         <div class="readout" id="g-budget-text"></div>
         <h3 class="sec-head">${esc(t("genome.legend"))}</h3>
-        <div class="legend" style="flex-direction:column;gap:5px">${[["", "unprobed"], ["background:var(--a);opacity:.25", "known"], ["sw-g", "priming"], ["sw-a", "alive"], ["", "absent"], ["sw-a\" style=\"border-top:2px solid var(--g)", "hot"], ["\" style=\"border-bottom:2px solid var(--g)", "suspect"], ["\" style=\"border-left:3px double var(--ink-40);background:var(--plate2)", "split"], ["sw-ink", "exhausted"], ["sw-c", "finalist"], ["sw-c", "winner"]].map(([cls, k]) => `<span><i class="sw ${cls}"></i>${esc(t("lg." + k))}</span>`).join("")}
+        <div class="legend" style="flex-direction:column;gap:5px">${[["", "unprobed"], ["sw-known", "known"], ["sw-g", "priming"], ["sw-a", "alive"], ["sw-absent", "absent"], ["sw-edge", "hot"], ["sw-suspect", "suspect"], ["sw-split", "split"], ["sw-ink", "exhausted"], ["sw-ring", "finalist"], ["sw-win", "winner"]].map(([cls, k]) => `<span><i class="sw ${cls}"></i>${esc(t("lg." + k))}</span>`).join("")}
         </div>
         <h3 class="sec-head">${esc(t("genome.liveNotes"))}</h3>
         <div class="ticker" id="g-ticker"></div>
@@ -975,6 +1065,7 @@ Views.genome = (el) => {
         <p class="plain-note">${esc(t("genome.tapHint"))} <span class="mono" id="g-hover"></span></p>
         <div id="g-lane"></div>
         <p id="g-done"></p>
+        <div id="g-results"></div>
         <h3 class="sec-head">${esc(t("genome.trace"))}</h3>
         <canvas class="trace" id="g-trace"></canvas>
         <h3 class="sec-head">${esc(t("genome.liveTop"))}</h3>
@@ -1032,16 +1123,24 @@ Views.genome = (el) => {
     const spent = c.probesSpent || 0;
     $("#g-budget-fill").style.width = budgetTotal ? Math.min(100, (spent / budgetTotal) * 100) + "%" : "0%";
     $("#g-budget-text").textContent = budgetTotal ? t("genome.spent", { spent: fmt(spent), total: fmt(budgetTotal) }) : t("genome.spentOnly", { spent: fmt(spent) });
-    $("#g-ticker").innerHTML = app.ticker.slice(0, 8).map((x) => `<div>${esc(x)}</div>`).join("");
+    // The notes stream, in the reader's language: the newest line
+    // settles in with motion (never under calm) and carries the
+    // live dot while the run is live; unchanged heads don't re-animate.
+    const tickTop = app.ticker.slice(0, 8), tickEl = $("#g-ticker");
+    const tickChanged = tickTop[0] !== lastTickTop; lastTickTop = tickTop[0];
+    tickEl.innerHTML = tickTop.map((x, i) => `<div${i === 0 && tickChanged && !prefs.calm ? ' class="note-in"' : ""}>${esc(tickerLine(x))}</div>`).join("");
+    tickEl.classList.toggle("live", app.runStatus === "running" && app.runMode === "hard");
     subTo();
   };
+  let lastTickTop;
   const journalEl = $("#g-journal"), journalLines = [];
   const pushJournal = (text) => {
     if (!text || journalLines[journalLines.length - 1] === text) return;
     journalLines.push(text); if (journalLines.length > 40) journalLines.shift();
-    journalEl.innerHTML = journalLines.map((x) => `<div>${esc(x)}</div>`).join("");
+    journalEl.innerHTML = journalLines.map((x, i) => `<div${i === journalLines.length - 1 && !prefs.calm ? ' class="note-in"' : ""}>${esc(x)}</div>`).join("");
     journalEl.scrollTop = journalEl.scrollHeight;
   };
+  const showResults = makeInlineResults("#g-results", "hard", ["complete", "paused-done", "failed"]);
   const controlsTo = () => {
     const running = app.runStatus === "running" && app.runMode === "hard";
     const done = $("#g-done");
@@ -1049,12 +1148,15 @@ Views.genome = (el) => {
     else if (app.runMode === "hard" && app.runStatus === "paused-done") done.innerHTML = `${esc(t("console.stopped"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
     else if (app.runMode === "hard" && app.runStatus === "failed") done.innerHTML = `${esc(t("console.failed", { reason: app.runError || t("err.unknown") }))} <a href="#/diagnostics">${esc(t("nav.diagnostics"))}</a>`;
     else done.innerHTML = "";
+    journalEl.classList.toggle("live", running);
+    showResults();
     $("#g-begin").hidden = running || app.runStatus === "paused-done";
     const canResume = app.runStatus === "paused-done" && ((app.state || {}).status || {}).resumeAvailable;
     $("#g-resume").hidden = !canResume;
     const rl = $("#g-resume-line");
-    rl.hidden = !canResume;
-    if (canResume) rl.textContent = t("dash.resumeLine", { phase: t("phase." + (app.phase || "hard-primer")), probes: fmt(app.counters.probesSpent || 0) });
+    const line = canResume ? resumeLineText() : "";
+    rl.hidden = !line;
+    if (line) rl.textContent = line;
     const stop = $("#g-stop");
     stop.hidden = !running;
     if (app.stopping) { stop.disabled = true; stop.textContent = t("ui.stopping"); }
@@ -1062,7 +1164,7 @@ Views.genome = (el) => {
     railTo(app.phase); countersTo();
   };
   const topTo = (rows) => {
-    $("#g-top").innerHTML = rows && rows.length ? `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th class="num">↓95</th><th>${t("col.pop")}</th><th>${t("col.ip")} /24</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td class="num">${pct1(r.eligibility.confidence95.lower)}</td><td>${esc(r.eligibility.pops.dominant || "–")}</td><td>${D(r.block || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="empty">${esc(t("console.noCandidates"))}</p>`;
+    $("#g-top").innerHTML = rows && rows.length ? `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th class="num">↓95</th><th class="c-pop">${t("col.pop")}</th><th class="c-block">${t("col.ip")} /24</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td class="num">${pct1(r.eligibility.confidence95.lower)}</td><td class="c-pop">${esc(r.eligibility.pops.dominant || "–")}</td><td class="c-block">${D(r.block || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="empty">${esc(t("console.noCandidates"))}</p>`;
   };
   const laneTo = () => {
     $("#g-lane").innerHTML = app.lane.length ? `<div class="lane"><h3 class="sec-head">${esc(t("lane.title"))}</h3>${app.lane.map((r) => `<div class="lane-row"><span>${D(r.ip)}</span><span class="ev">${esc(t("det.overall"))} <b>${f1(r.scores?.overall)}</b></span><span class="ev">${esc(t("comp.streaming"))} <b>${fTrim(r.streaming?.sustainableMbps)} Mbps</b></span><span class="ev">${esc(t("comp.load"))} <b>${f2(r.load?.sustainedMbps)} Mbps · ${f1(r.load?.rpm)} rpm</b></span><span class="ev">${esc(verdictWord(r))}</span></div>`).join("")}</div>` : "";
@@ -1150,15 +1252,22 @@ Views.scan = (el, parts) => {
         <h3 class="sec-head">${esc(t("console.ledger"))}</h3>
         <div id="sc-ledger"><p class="empty">${esc(t("console.noCandidates"))}</p></div>
         <p class="plain-note">${esc(t("console.ledgerNote"))}</p>
+        <div id="sc-results"></div>
         <p id="sc-done"></p>
       </div>
     </div>`;
   app.src.getSettings().then(({ settings }) => app.src.estimate(settings)).then((r) => { const n = $("#sc-est"); if (n && r) n.textContent = fmtBytes(r.perCandidateBytes * P.n); }).catch(() => {});
   const seg = (f) => `<span class="segbar">${[0.25, 0.5, 0.75, 1].map((x) => `<i class="${f >= x ? "full" : f > x - 0.25 ? "part" : ""}"></i>`).join("")}</span>`;
   const renderLedger = () => {
-    const rows = [...app.ledger.values()].filter((r) => r.stage);
+    // Rows here are the report's own (run end, ranked) — the old
+    // `stage` filter emptied this table forever. Bar = real rate.
+    const rows = [...app.ledger.values()];
     if (!rows.length) return;
-    $("#sc-ledger").innerHTML = `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th>SPRT</th><th>${t("col.verdict")}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${seg(r.stage?.elig || 0)} ${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td>${seg(r.stage?.sprt || 0)} <span class="dim">${esc(r.sprt || "")}</span></td><td>${esc(r.verdict ? verdictWord(r) : "")}</td></tr>`).join("")}</tbody></table>`;
+    $("#sc-ledger").innerHTML = `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th>${t("col.verdict")}</th></tr></thead><tbody>${rows.map((r) => {
+      const e = r.eligibility || {};
+      const frac = e.attempts ? (e.successes || 0) / e.attempts : 0;
+      return `<tr><td>${D(r.ip)}</td><td>${seg(frac)} ${D((e.successes ?? "–") + "/" + (e.attempts ?? "–"))}</td><td>${esc(r.verdict ? verdictWord(r) : "")}</td></tr>`;
+    }).join("")}</tbody></table>`;
   };
   const railTo = (phase) => { const idx = SCAN_PHASES.indexOf(phase); $$("#sc-rail .station").forEach((s, k) => { s.className = "station" + (idx >= 0 && k < idx ? " done" : idx >= 0 && k === idx ? " now" : ""); }); $("#sc-phase").textContent = phase && t("phase." + phase) ? t("phase." + phase) : ""; };
   // The journal: the run narrated in plain words, newest last,
@@ -1168,7 +1277,7 @@ Views.scan = (el, parts) => {
   const pushJournal = (text) => {
     if (!text || journalLines[journalLines.length - 1] === text) return;
     journalLines.push(text); if (journalLines.length > 40) journalLines.shift();
-    journalEl.innerHTML = journalLines.map((x) => `<div>${esc(x)}</div>`).join("");
+    journalEl.innerHTML = journalLines.map((x, i) => `<div${i === journalLines.length - 1 && !prefs.calm ? ' class="note-in"' : ""}>${esc(x)}</div>`).join("");
     journalEl.scrollTop = journalEl.scrollHeight;
   };
   const withIp = (line, ip) => (ip ? line.replace("\u0001", D(ip)) : line);
@@ -1179,7 +1288,7 @@ Views.scan = (el, parts) => {
     if (app.stopping) return t("ui.stopping");
     if (app.runStatus !== "running") return "";
     const c = app.counters, ph = app.phase, done = fmt(c.completed || 0), total = fmt(c.total || 0);
-    if (ph === "calibrating") return (c.total || 0) > 1 ? t("op.calibratingLevel", { done, total }) : t("op.calibrating");
+    if (ph === "calibrating") return c.hunt ? t("op.calibratingHunt", { done, total }) : (c.total || 0) > 1 ? t("op.calibratingLevel", { done, total }) : t("op.calibrating");
     if (ph === "screening") return withIp(t(c.currentIp ? "op.screening" : "op.screeningNoIp", { round: c.round || 1, rounds: P.rounds, ip: "\u0001", done, total }), c.currentIp);
     if (ph === "delayed-retry") return t("op.delayed-retry", { done, total });
     if (ph === "verification") return t("op.verification", { done, total });
@@ -1192,8 +1301,10 @@ Views.scan = (el, parts) => {
     $("#sc-pulse").hidden = !(app.runStatus === "running" && app.runMode === mode);
     $("#sc-counters").textContent = app.runMode === mode && app.runStatus === "running" ? `${fmt(app.counters.completed || 0)} / ${fmt(app.counters.total || 0)} · ${mmss(app.elapsedMs())} · ${fmt(app.counters.eligible || 0)} ${esc(t("col.elig"))}` : "";
   };
+  const showResults = makeInlineResults("#sc-results", mode, ["complete", "canceled", "failed"]);
   const controlsTo = () => {
     const running = app.runStatus === "running" && app.runMode === mode;
+    journalEl.classList.toggle("live", running);
     $("#sc-start").hidden = running;
     const stop = $("#sc-stop");
     stop.hidden = !running;
@@ -1204,6 +1315,7 @@ Views.scan = (el, parts) => {
     if (app.runMode === mode && app.runStatus === "complete") $("#sc-done").innerHTML = `${esc(t("console.finished"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
     else if (app.runMode === mode && app.runStatus === "canceled") $("#sc-done").innerHTML = `${esc(t("console.stopped"))} <a href="#/results">${esc(t("console.viewResults"))}</a>`;
     else if (app.runMode === mode && app.runStatus === "failed") $("#sc-done").innerHTML = `${esc(t("console.failed", { reason: app.runError || t("err.unknown") }))} <a href="#/diagnostics">${esc(t("nav.diagnostics"))}</a>`;
+    showResults();
   };
   $("#sc-start").addEventListener("click", () => startRun(mode));
   $("#sc-stop").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopRunArm", stopRun));
@@ -1232,14 +1344,15 @@ Views.results = (el, parts, q) => {
     if (!report || !report.results) { box.innerHTML = `<p class="empty">${esc(t("res.empty"))}</p>`; return; }
     const rows = block ? report.results.filter((r) => r.block === block) : report.results;
     const ranks = rows.map((r) => report.results.indexOf(r) + 1);
+    const noneResponded = !block && ((rows.length > 0 && rows.every((r) => r.measurement?.status === "unmeasured")) || (rows.length === 0 && (report.totals?.candidates || 0) > 0));
     const dl = `<a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/download">${esc(t("ui.downloadJson"))}</a> <a class="btn btn-quiet" href="/api/reports/${encodeURIComponent(report.runId)}/best-ips">${esc(t("ui.downloadBest"))}</a>`;
     box.innerHTML = `
       <p class="view-sub">${esc(t("res.fromRun", { run: report.runId, mode: t("mode." + (report.mode || "full")), when: report.finishedAt || "" }))}</p>
       <div class="kv"><span>${t("console.candidates")} <b>${fmt(report.totals?.candidates)}</b></span> · <span>${t("col.elig")} <b>${fmt(report.totals?.eligible)}</b></span> · <span>${t("ms.complete")} <b>${fmt(report.totals?.complete)}</b></span> · <span>${t("ms.partial")} <b>${fmt(report.totals?.partial)}</b></span><span style="margin-inline-start:auto">${dl}</span></div>
-      ${!block && rows.length ? `<p class="best-line"><span class="tick-a">▸</span> ${esc(t("res.top"))}: ${D(rows[0].ip)} · ${esc(verdictWord(rows[0]))} · ${esc(t("col.cons"))} ${D(f1(rows[0].scores?.conservative))}</p>` : ""}
+      ${!block && rows.length && !noneResponded ? `<p class="best-line"><span class="tick-a">▸</span> ${esc(t("res.top"))}: ${D(rows[0].ip)} · ${esc(verdictWord(rows[0]))} · ${esc(t("col.cons"))} ${D(f1(rows[0].scores?.conservative))}</p>` : ""}
       <p class="plain-note">${esc(t("res.scope"))} ${esc(t("res.legend"))}</p>
       ${block ? `<p class="plain-note">${esc(t("res.filterBlock", { block }))} · <a href="#/results?run=${encodeURIComponent(report.runId)}">${esc(t("res.clearFilter"))}</a></p>` : ""}
-      <div style="margin-top:10px">${resultsTable(rows, false, ranks)}</div>`;
+      ${noneResponded ? `<p class="best-line">${esc(t("res.noneResponded", { count: fmt(report.totals?.candidates ?? rows.length) }))}</p>` : `<div style="margin-top:10px">${resultsTable(rows, false, ranks)}</div>`}`;
     $$("#res-body tr.clickable").forEach((tr) => tr.addEventListener("click", () => {
       if (tr.nextElementSibling && tr.nextElementSibling.classList.contains("detail-row")) { tr.nextElementSibling.remove(); return; }
       const r = rows[+tr.dataset.i]; if (!r) return;
@@ -1290,7 +1403,7 @@ const getPath = (o, p) => p.split(".").reduce((a, k) => (a == null ? a : a[k]), 
 const setPath = (o, p, v) => { const ks = p.split("."); let a = o; for (let i = 0; i < ks.length - 1; i++) a = a[ks[i]] ?? (a[ks[i]] = {}); a[ks[ks.length - 1]] = v; };
 Views.settings = (el) => {
   el.innerHTML = `<h2 class="view-title">${esc(t("set.title"))}</h2><p class="view-sub">${esc(t("set.sub"))}</p><div id="set-body"><p class="empty">…</p></div>`;
-  let cur = null, catalog = null, estTimer = 0;
+  let cur = null, catalog = null, estTimer = 0, lastBad = [];
   const fieldHtml = (f) => {
     const v = getPath(cur, f.p), key = f.p.split(".").pop();
     const label = `<span class="f-label"><span>${esc(key)}</span><span class="f-key">${esc(f.p)}</span></span>`;
@@ -1332,17 +1445,17 @@ Views.settings = (el) => {
       <span class="readout dim" id="set-est"></span></div></form>`;
     wire();
   };
-  const collect = (silent) => {
-    const out = JSON.parse(JSON.stringify(cur)); let bad = 0;
+  const collect = () => {
+    const out = JSON.parse(JSON.stringify(cur)); let bad = 0; lastBad = [];
     $$("#set-form [data-path]").forEach((inp) => {
       const p = inp.dataset.path, ty = inp.dataset.ty;
       inp.classList.remove("invalid");
       if (inp.type === "checkbox") { setPath(out, p, inp.checked); return; }
       if (inp.tagName === "SELECT") { setPath(out, p, inp.value); return; }
       if (ty === "text") { setPath(out, p, inp.value); return; }
-      if (ty === "list") { const arr = inp.value.split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x)); if (!arr.length) { bad++; inp.classList.add("invalid"); } else setPath(out, p, arr); return; }
+      if (ty === "list") { const arr = inp.value.split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x)); if (!arr.length) { bad++; lastBad.push(p); inp.classList.add("invalid"); } else setPath(out, p, arr); return; }
       const v = Number(inp.value), f = SETTINGS_SCHEMA.flatMap((g) => g.fields || (g.subgroups || []).flatMap((s) => s.fields)).find((x) => x.p === p);
-      if (!Number.isFinite(v) || (f && f.pos !== false && v <= 0)) { bad++; if (!silent) inp.classList.add("invalid"); else inp.classList.add("invalid"); return; }
+      if (!Number.isFinite(v) || (f && f.pos !== false && v <= 0)) { bad++; lastBad.push(p); inp.classList.add("invalid"); return; }
       setPath(out, p, ty === "int" || ty === "bytes" ? Math.round(v) : v);
     });
     $$("#set-form [data-wl]").forEach((cb) => {
@@ -1353,13 +1466,20 @@ Views.settings = (el) => {
   };
   const estimate = () => {
     clearTimeout(estTimer);
-    estTimer = setTimeout(async () => { const o = collect(true); if (!o) return; try { const r = await app.src.estimate(o); const n = $("#set-est"); if (n && r) n.textContent = t("set.estimate", { bytes: fmtBytes(r.perCandidateBytes) }); } catch { /* estimate is advisory */ } }, 400);
+    estTimer = setTimeout(async () => { const o = collect(); if (!o) return; try { const r = await app.src.estimate(o); const n = $("#set-est"); if (n && r) n.textContent = t("set.estimate", { bytes: fmtBytes(r.perCandidateBytes) }); } catch { /* estimate is advisory */ } }, 400);
   };
   const wire = () => {
     $("#set-form").addEventListener("input", estimate); estimate();
     $("#set-save").addEventListener("click", async () => {
-      const o = collect(false);
-      if (!o) { app.showNotice(t("set.invalid")); return; }
+      const o = collect();
+      if (!o) {
+        // An unfindable refusal reads as a dead button: name the
+        // fields, open the first one's group, focus it.
+        app.showNotice(t("set.invalidList", { fields: lastBad.join(", ") }));
+        const first = $$("#set-form [data-path]").find((i) => i.dataset.path === lastBad[0]);
+        if (first) { const d = first.closest("details"); if (d) d.open = true; first.scrollIntoView(); first.focus(); }
+        return;
+      }
       const r = await app.src.action("saveSettings", o);
       if (r && r.error) app.showNotice(r.message || r.error); else { cur = o; app.showNotice(t("set.saved"), "info"); }
     });
@@ -1540,7 +1660,13 @@ function scheduleReachCheck() {
   window.addEventListener("hashchange", route);
   // The banner's clock is local and always ticking while a run is
   // live, so no quiet phase can ever look frozen.
-  setInterval(() => { if (app.runStatus === "running") app.refreshChrome(true); }, 1000);
+  setInterval(() => {
+    if (app.runStatus !== "running") return;
+    app.refreshChrome(true);
+    // The snapshot is the contract, the stream only a shortcut:
+    // a long event silence may mean a lost frame — fetch truth.
+    if (!app.offline && Date.now() - app._lastEventAt > 15000) { app._lastEventAt = Date.now(); app.resync(); }
+  }, 1000);
   (async () => {
     app.src = Live;
     if (await Live.probe().catch(() => false)) { await connectLive(); route(); }

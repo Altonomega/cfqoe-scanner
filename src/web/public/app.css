@@ -102,6 +102,7 @@ a:hover { text-decoration: underline; }
   font: 12.5px var(--sans); color: var(--ink); background: var(--plate);
   border: 1px solid var(--ink-40); border-radius: 6px; padding: 6px 12px;
   cursor: pointer; transition: background 160ms var(--ease), border-color 160ms var(--ease);
+  user-select: none; -webkit-user-select: none;
 }
 .btn:hover { border-color: var(--ink); }
 .btn:disabled { opacity: 0.45; cursor: default; }
@@ -180,11 +181,11 @@ a:hover { text-decoration: underline; }
 
 /* run cards (dashboard) */
 .run-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0; border-top: 1px solid var(--rule); border-left: 1px solid var(--rule); }
-.run-card { border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 14px 16px; background: var(--plate); }
+.run-card { border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 14px 16px; background: var(--plate); display: flex; flex-direction: column; }
 .run-card h3 { margin: 0 0 2px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .base-dot { width: 10px; height: 10px; border-radius: 1px; display: inline-block; }
-.run-card p { margin: 4px 0 10px; font-size: 12.5px; color: var(--ink-60); min-height: 3em; }
-.run-card .btn { width: 100%; }
+.run-card p { margin: 4px 0 10px; font-size: 12.5px; color: var(--ink-60); }
+.run-card .btn { width: 100%; margin-top: auto; }
 
 /* tables */
 table.data { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
@@ -247,7 +248,7 @@ fieldset.group legend {
 }
 .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 24px; clear: both; padding-top: 6px; }
 .field { display: block; }
-.field .f-label { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 3px; }
+.field .f-label { display: flex; justify-content: space-between; flex-wrap: wrap; column-gap: 10px; font-size: 12.5px; margin-bottom: 3px; }
 .field .f-label .f-key { font-family: var(--mono); color: var(--ink-60); font-size: 11.5px; }
 .field .f-note { font-size: 11.5px; color: var(--ink-40); margin-top: 2px; }
 .field .f-warn { font-size: 11.5px; color: var(--g); margin-top: 2px; font-weight: 600; }
@@ -291,11 +292,6 @@ details.advanced > summary {
 .rail .station.now { border-left-color: var(--g); font-weight: 650; }
 .rail .station.now::before { background: var(--g); border-color: var(--g); }
 .rail .station .st-note { display: block; font: 11.5px var(--mono); color: var(--ink-60); font-weight: 400; }
-.rail-h { flex-direction: row; flex-wrap: wrap; gap: 4px 18px; }
-.rail-h .station { border-left: none; border-top: 2px solid var(--rule); padding: 8px 4px 0; }
-.rail-h .station::before { left: 4px; top: -5px; }
-.rail-h .station.done { border-top-color: var(--a); }
-.rail-h .station.now { border-top-color: var(--g); }
 
 .console-grid { display: flex; gap: 28px; align-items: flex-start; }
 .console-side { flex: 0 0 210px; }
@@ -305,18 +301,45 @@ details.advanced > summary {
 .ticker { font: 12px/1.7 var(--mono); color: var(--ink-60); max-height: 168px; overflow-y: auto; }
 .ticker div b { color: var(--ink); font-weight: 600; }
 
+/* live notes in motion: a fresh entry settles in (transform +
+   opacity only, so phones never pay for it), and while a run is
+   live the newest entry carries the same pulse dot as the scan
+   console's now-line. The calm gate and reduced-motion still
+   every bit of this; the JS also withholds the arrival class
+   under calm, so a calmed page never even marks it. */
+@keyframes note-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.ticker div.note-in, .notes-body div.note-in { animation: note-in 0.45s var(--ease); }
+.ticker:not(.journal).live > div:first-child::before, .journal.live > div:last-child::before, .notes-body.live > div:first-child::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--g); margin-inline-end: 7px; animation: pulse 1.6s ease-in-out infinite;
+}
+
 /* plate + ideogram + trace */
-.plate-wrap { position: relative; }
 canvas.plate, canvas.ideo, canvas.trace { display: block; width: 100%; }
 canvas.ideo { margin-bottom: 4px; }
 canvas.trace { margin-top: 10px; }
 .plate-frame { border: 1px solid var(--rule); background: var(--plate); padding: 10px; border-radius: 2px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--ink-60); margin-top: 8px; }
-.legend .sw { display: inline-block; width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--rule); }
-.legend .sw-a { background: var(--a); } .legend .sw-g { background: var(--g); }
-.legend .sw-c { border: 2px solid var(--c); background: transparent; }
+/* Each swatch is the plate's own mark in miniature — the corner
+   tick of a known block, the absent tick on the bottom edge, gold
+   on top for expanding and underneath for suspect, the split
+   seam, the finalist's ring, the winner's dot — so no two states
+   are told apart by hue alone, in either theme. */
+.legend .sw { display: inline-block; width: 11px; height: 11px; margin-inline-end: 5px; vertical-align: -1px; border: 1px solid var(--rule); position: relative; }
+.legend .sw-a { background: var(--a); }
+.legend .sw-g { background: var(--g); animation: pulse 1.6s ease-in-out infinite; }
+.legend .sw-known { background: var(--plate-2); }
+.legend .sw-known::after { content: ""; position: absolute; top: 0; right: 0; width: 3px; height: 2px; background: var(--ink-40); }
+.legend .sw-absent::after { content: ""; position: absolute; left: 4px; bottom: 1px; width: 3px; height: 2px; background: var(--ink-40); }
+.legend .sw-edge { background: var(--a); border-top: 2px solid var(--g); }
+.legend .sw-suspect { border-bottom: 2px solid var(--g); }
+.legend .sw-suspect::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: var(--a); }
+.legend .sw-split { background: var(--plate-2); border-left: 3px double var(--ink-40); }
+.legend .sw-split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--ink-40); }
 .legend .sw-ink { background: var(--ink-12); }
-.mini-plate { cursor: pointer; }
+.legend .sw-ring { background: var(--a); border: 2px solid var(--c); }
+.legend .sw-win { background: var(--a); border: 2px solid var(--c); }
+.legend .sw-win::after { content: ""; position: absolute; left: 4px; top: 4px; width: 3px; height: 3px; border-radius: 50%; background: var(--paper); }
 
 /* sequencing lane */
 .lane { border-top: 1px solid var(--rule); margin-top: 12px; padding-top: 8px; }
@@ -389,6 +412,17 @@ canvas.trace { margin-top: 10px; }
   .inspector { left: 12px !important; right: 12px; width: auto; }
   .run-banner { padding-left: 12px; padding-right: 12px; }
   .btn { min-height: 40px; padding: 8px 14px; }
+  /* every tappable row reaches the 40px floor, not just buttons */
+  .switch { min-height: 40px; }
+  .checks label { min-height: 40px; align-items: center; }
+  .chip { min-height: 40px; padding: 9px 12px; }
+  details.advanced > summary { min-height: 40px; padding: 12px 0; }
+  /* the live-top table sheds its /24 column (the IP already says
+     it) instead of pushing the page sideways */
+  #g-top .c-block { display: none; }
+  /* long data tokens (paths, run ids) wrap inside their cell
+     instead of forcing the page wider than the phone */
+  .d { display: inline; overflow-wrap: anywhere; }
 }
 
 /* ---------- bilingual: Persian + RTL ----------
