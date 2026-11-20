@@ -146,7 +146,7 @@ manifest واقعی HLS خوانده می‌شود و `EXT-X-MAP`، `EXT-X-KEY`�
 
 ## Real Load
 
-مرحله Real Load دانلود و آپلود واقعی، latency زیر بار، fan-out، shaping و RPM را اندازه می‌گیرد. سقف دانلود دسکتاپ ۲۴ MiB و Android ۱۲ MiB است.
+مرحله Real Load دانلود و آپلود واقعی، latency زیر بار، fan-out، shaping و RPM را اندازه می‌گیرد. سقف دانلود دسکتاپ ۱۲ MiB و Android ۸ MiB است.
 
 متریک‌های خروجی شامل `sustainedMbps`، `shapingRatio`، `idleRttMs`، `loadedRttMs`، `rpm`، `jitterMs`، `lossRate`، `fanoutSuccess` و `uplinkMbps` هستند.
 
@@ -170,7 +170,7 @@ manifest واقعی HLS خوانده می‌شود و `EXT-X-MAP`، `EXT-X-KEY`�
 # فایل‌های خروجی
 
 ```text
-data/settings.json              تنظیمات کاربر (version 6)
+data/settings.json              تنظیمات کاربر (version 7)
 data/config.secret.uri          کانفیگ محافظت‌شده
 results/run-<id>.json           گزارش کامل (schema 9)
 results/latest.json             آخرین گزارش

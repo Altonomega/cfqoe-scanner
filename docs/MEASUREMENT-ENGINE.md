@@ -38,7 +38,7 @@ Finalistها با SPRT و مقادیر پیش‌فرض `p0=0.60`، `p1=0.90`، `
 
 ## 8. Real Load
 
-مرحله بار، دانلود و آپلود واقعی، latency زیر بار، shaping، fan-out و RPM را اندازه می‌گیرد. سقف دانلود 24 MiB دسکتاپ و 12 MiB Android است. flow، upload flow و control stage در Full و Hard Scan به probe منتقل می‌شوند.
+مرحله بار، دانلود و آپلود واقعی، latency زیر بار، shaping، fan-out و RPM را اندازه می‌گیرد. سقف دانلود 12 MiB دسکتاپ و 8 MiB Android است. flow، upload flow و control stage در Full و Hard Scan به probe منتقل می‌شوند.
 
 ## 9. Partial evidence
 
