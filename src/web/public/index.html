@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>CFQoE Scanner — Sequencer's Notebook</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header id="chrome">
+  <div class="wordmark" dir="ltr" aria-hidden="true">
+    <span class="wm-cell wm-a">A</span><span class="wm-cell wm-c">C</span><span class="wm-cell wm-g">G</span><span class="wm-cell wm-t">T</span>
+  </div>
+  <div class="title-block">
+    <h1>CFQoE <span class="thin" data-i18n="app.tagline">· Cloudflare IP Scanner</span></h1>
+    <p class="subtitle" data-i18n="app.subtitle">the sequencer's notebook — local session</p>
+  </div>
+  <svg id="helix" width="72" height="18" viewBox="0 0 72 18" aria-hidden="true"></svg>
+  <div class="chrome-right">
+    <span id="conn-pill" class="pill pill-off" data-i18n="conn.connecting">connecting…</span>
+    <span id="version" class="mono dim"></span>
+    <button id="lang-toggle" class="btn btn-quiet" type="button" aria-label="Language / زبان">فارسی</button>
+    <button id="calm-toggle" class="btn btn-quiet" type="button" aria-pressed="false" data-i18n="ui.calm">Calm</button>
+    <button id="theme-toggle" class="btn btn-quiet" type="button" data-i18n="ui.night">Night plate</button>
+    <button id="stop-server" class="btn btn-quiet danger" type="button" data-i18n="ui.stopServer">Stop server</button>
+  </div>
+</header>
+
+<div id="sim-bar" class="sim-bar" hidden>
+  <strong data-i18n="sim.badge">SIMULATED FEED</strong>
+  <span data-i18n="sim.note">Preview data source — a local simulation speaking the live contract. No scanner is running; nothing here is measured.</span>
+  <label class="sim-speed"><span data-i18n="sim.speed">speed</span>
+    <select id="sim-speed">
+      <option value="1">1×</option>
+      <option value="4">4×</option>
+      <option value="16" selected>16×</option>
+      <option value="48">48×</option>
+    </select>
+  </label>
+  <button id="to-live" class="btn btn-quiet" type="button" data-i18n="sim.useLive">Use live server</button>
+</div>
+
+<div id="run-banner" class="run-banner" hidden>
+  <span class="rb-label" data-i18n="run.running">RUNNING</span>
+  <span id="rb-text" class="mono"></span>
+  <a id="rb-jump" href="#/genome" data-i18n="run.openConsole">open console →</a>
+</div>
+
+<div id="notice" class="notice" hidden></div>
+
+<div id="layout">
+  <nav id="margin" aria-label="Views">
+    <p class="margin-head" data-i18n="nav.head">Notebook</p>
+    <a data-nav="dashboard" href="#/">Plate</a>
+    <a data-nav="genome" href="#/genome">Genome</a>
+    <a data-nav="results" href="#/results">Results</a>
+    <a data-nav="reports" href="#/reports">Reports</a>
+    <a data-nav="settings" href="#/settings">Settings</a>
+    <a data-nav="config" href="#/config">Config</a>
+    <a data-nav="diagnostics" href="#/diagnostics">Diagnostics</a>
+    <div class="margin-notes">
+      <p class="margin-head" data-i18n="nav.notes">Run notes</p>
+      <div id="margin-notes" class="notes-body">—</div>
+    </div>
+  </nav>
+  <main id="view" tabindex="-1"></main>
+</div>
+
+<div id="inspector" class="inspector" hidden></div>
+
+<footer id="colophon">
+  <span data-i18n="app.colophon">CFQoE Scanner — measurements are run-relative; scores compare candidates within one run.</span>
+  <span id="foot-status" class="mono"></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
