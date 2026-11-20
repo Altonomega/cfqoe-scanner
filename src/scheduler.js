@@ -19,6 +19,11 @@ export async function runInterleaved({
   seed = 404,
   task,
   onProgress = null,
+  // Optional cancel predicate (the web layer's stop token): workers
+  // stop pulling new items once it turns true and the results gathered
+  // so far are returned. Absent (every terminal caller), the loop is
+  // exactly the historical one — same order, same results.
+  isCanceled = null,
 }) {
   const results = new Map();
   let completed = 0;
@@ -30,6 +35,7 @@ export async function runInterleaved({
 
     const workers = Array.from({ length: Math.max(1, Math.min(concurrency, ordered.length)) }, async () => {
       while (cursor < ordered.length) {
+        if (isCanceled && isCanceled()) return;
         const index = cursor;
         cursor += 1;
         const item = ordered[index];

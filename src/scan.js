@@ -52,6 +52,13 @@ export async function runScan({
   logger,
   onProgress = () => {},
   runId = randomUUID(),
+  // Optional external cancel token (AbortSignal-shaped): the web
+  // layer's stop button. When it aborts, the scan stops starting new
+  // work at the next stage/batch boundary and still writes its report
+  // from the evidence gathered, marked canceled — the graceful stop
+  // the terminal never needed (its Ctrl+C kills the process) and
+  // therefore never passes. Absent, every path below is unchanged.
+  signal = null,
 }) {
   const startedAt = new Date().toISOString(),
     vless = parseVlessUri(vlessUri);
@@ -65,7 +72,8 @@ export async function runScan({
     emitProgress = (event) => {
       onProgress(event);
       recordProgress(event);
-    };
+    },
+    isCanceled = () => Boolean(signal && signal.aborted);
   const target = describeVless(vless),
     seed = randomInt(0, 4294967296);
   let effectiveSettings = { ...settings, scan: { ...settings.scan, seed } };
@@ -79,7 +87,9 @@ export async function runScan({
       max: effectiveSettings.scan.maxCandidates,
       seed,
     }),
-    calibration = await calibrateWebsocketConcurrency({
+    calibration = isCanceled()
+      ? null
+      : await calibrateWebsocketConcurrency({
       candidates,
       vless,
       calibration: effectiveSettings.calibration,
@@ -87,35 +97,41 @@ export async function runScan({
       timeoutMs: effectiveSettings.scan.timeoutMs,
       seed,
     });
-  effectiveSettings = {
-    ...effectiveSettings,
-    scan: {
-      ...effectiveSettings.scan,
-      concurrency: calibration.selectedConcurrency,
-    },
-    calibration: { ...effectiveSettings.calibration, result: calibration },
-  };
-  emitProgress({
-    phase: "calibrating",
-    completed: 1,
-    total: 1,
-    note: `concurrency ${calibration.selectedConcurrency} selected`,
-  });
+  // A run canceled before calibration keeps the configured settings
+  // verbatim: no verdict was measured, so none is applied or logged.
+  effectiveSettings = calibration
+    ? {
+        ...effectiveSettings,
+        scan: {
+          ...effectiveSettings.scan,
+          concurrency: calibration.selectedConcurrency,
+        },
+        calibration: { ...effectiveSettings.calibration, result: calibration },
+      }
+    : effectiveSettings;
+  calibration &&
+    emitProgress({
+      phase: "calibrating",
+      completed: 1,
+      total: 1,
+      note: `concurrency ${calibration.selectedConcurrency} selected`,
+    });
   // Calibration chose the operative concurrency (the configured value
   // is only its ceiling); record the verdict with the per-level results
   // or "why is this scan crawling at concurrency 1?" is unanswerable
   // from the log.
-  logger.info("scan.calibration", {
-    requestedConcurrency: calibration.requestedConcurrency,
-    selectedConcurrency: calibration.selectedConcurrency,
-    reason: calibration.reason,
-    controlIp: calibration.controlIp ?? null,
-    levels: calibration.levels,
-  });
+  calibration &&
+    logger.info("scan.calibration", {
+      requestedConcurrency: calibration.requestedConcurrency,
+      selectedConcurrency: calibration.selectedConcurrency,
+      reason: calibration.reason,
+      controlIp: calibration.controlIp ?? null,
+      levels: calibration.levels,
+    });
   // A no-control outcome means calibration silently no-ops and the scan
   // runs at the requested concurrency unmeasured — on exactly the
   // filtered paths that most needed measuring. Surface it at warn.
-  if ("no_working_control" === calibration.reason)
+  if (calibration && "no_working_control" === calibration.reason)
     logger.warn("scan.calibration.no_control", {
       requestedConcurrency: calibration.requestedConcurrency,
       controlProbes: calibration.controlProbes ?? null,
@@ -132,11 +148,14 @@ export async function runScan({
     completed: 0,
     total: candidates.length * rounds,
   });
-  const screeningResults = await runInterleaved({
+  const screeningResults = isCanceled()
+    ? []
+    : await runInterleaved({
       items: candidates,
       rounds,
       concurrency: effectiveSettings.scan.concurrency,
       seed,
+      isCanceled,
       task: async (item, round) => {
         const observation = await probeWebsocket({
           ip: item.ip,
@@ -154,7 +173,7 @@ export async function runScan({
     observationsByIp = new Map(
       screeningResults.map((result) => [result.item.ip, result.observations]),
     );
-  if (effectiveSettings.scan.delayedRetry?.enabled) {
+  if (effectiveSettings.scan.delayedRetry?.enabled && !isCanceled()) {
     const retryCandidates = selectDelayedRetries(
       screeningResults.map((result) => ({
         candidate: result.item,
@@ -181,6 +200,7 @@ export async function runScan({
             vless,
             timeoutMs: effectiveSettings.scan.timeoutMs,
           }),
+        isCanceled,
         onCandidateDone: ({ finished, total }) =>
           emitProgress({ phase: "delayed-retry", completed: finished, total }),
       });
@@ -207,7 +227,11 @@ export async function runScan({
       ),
     verificationByIp = new Map(),
     decisionsByIp = new Map();
-  if (effectiveSettings.verification?.enabled && screenedRanked.length) {
+  if (
+    effectiveSettings.verification?.enabled &&
+    screenedRanked.length &&
+    !isCanceled()
+  ) {
     const finalists = screenedRanked
       .slice(0, effectiveSettings.verification.limit)
       .map((entry) => entry.candidate);
@@ -228,6 +252,7 @@ export async function runScan({
           vless,
           timeoutMs: effectiveSettings.scan.timeoutMs,
         }),
+      isCanceled,
       onCandidateDone: ({ finished, total, decision }) =>
         emitProgress({
           phase: "verification",
@@ -274,7 +299,7 @@ export async function runScan({
     load: Boolean(effectiveSettings.load?.enabled),
   };
   let xrayStatus = { enabled: !1, path: null, reason: "disabled" };
-  if (effectiveSettings.tunnel.enabled && eligible.length > 0) {
+  if (effectiveSettings.tunnel.enabled && eligible.length > 0 && !isCanceled()) {
     const xrayLocation = locateXray({
       configuredPath: effectiveSettings.tunnel.xrayPath,
       root: layout.root,
@@ -345,6 +370,7 @@ export async function runScan({
         total: totalCount,
       });
       for (const { candidate } of tunnelCandidates) {
+        if (isCanceled()) break;
         if (
           !shouldAttemptTunnelCandidate({
             attempts,
@@ -380,6 +406,7 @@ export async function runScan({
           round <= effectiveSettings.tunnel.rounds;
           round += 1
         ) {
+          if (isCanceled()) break;
           try {
             xrayHandle ??= await startXray({
               xrayPath: xrayLocation.path,
@@ -624,6 +651,7 @@ export async function runScan({
       samplingSeed: seed,
       report: written.jsonPath,
       bytesMeasured: written.report.totals.bytesMeasured,
+      canceled: isCanceled(),
     }),
     {
       ...written,
@@ -633,6 +661,11 @@ export async function runScan({
       rangeCount: ranges.length,
       samplingSeed: seed,
       runId,
+      // Same vocabulary as the Hard path's return, so callers (the
+      // web run manager today, lifecycle records at the entry points)
+      // read one shape from both engines.
+      canceled: isCanceled(),
+      stoppedReason: isCanceled() ? "canceled" : "completed",
     }
   );
 }
