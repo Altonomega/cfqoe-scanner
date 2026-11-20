@@ -146,7 +146,11 @@ function combineCandidates(current, next) {
   };
 }
 
-function rankCandidates(candidates) {
+// The one ranking for per-block best-candidate lists: merge inputs are
+// ranked here — including the MAX_BEST_CANDIDATES cap — and callers (the
+// screening engine) must not re-implement it. Exported so the engine's
+// block results are built with exactly the ranking the merge applies.
+export function rankCandidates(candidates) {
   const byIp = new Map();
   for (const candidate of candidates) {
     const sanitized = sanitizeCandidate(candidate);

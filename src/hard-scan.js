@@ -34,6 +34,7 @@ import {
 } from "./report.js";
 import { runLoadProbe } from "./probe/load.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
+import { compareEligibilitySummaries } from "./hard-engine.js";
 export const HARD_STATE_VERSION = 3;
 function clampInt(value, fallback = 1, max = 64) {
   const parsed = Math.floor(Number(value));
@@ -47,30 +48,15 @@ function successRate(observations) {
     : observations.filter((observation) => observation.ok).length /
         observations.length;
 }
-function compareEligibility(left, right) {
-  const leftLower = left.eligibility.confidence95?.lower ?? 0,
-    rightLower = right.eligibility.confidence95?.lower ?? 0;
-  if (rightLower !== leftLower) return rightLower - leftLower;
-  if (right.eligibility.successRate !== left.eligibility.successRate)
-    return right.eligibility.successRate - left.eligibility.successRate;
-  const leftHandshake =
-      left.eligibility.handshakeMedianMs ?? Number.POSITIVE_INFINITY,
-    rightHandshake =
-      right.eligibility.handshakeMedianMs ?? Number.POSITIVE_INFINITY;
-  if (leftHandshake !== rightHandshake) return leftHandshake - rightHandshake;
-  const leftConnect =
-      left.eligibility.connectMedianMs ?? Number.POSITIVE_INFINITY,
-    rightConnect =
-      right.eligibility.connectMedianMs ?? Number.POSITIVE_INFINITY;
-  return leftConnect !== rightConnect
-    ? leftConnect - rightConnect
-    : left.ip.localeCompare(right.ip);
-}
+// The finalize ordering has exactly one definition — the engine's
+// compareEligibilitySummaries (Wilson lower bound, success rate,
+// handshake median, connect median, IP) — shared by the live top list,
+// the finalist merge, and verification, for both engines.
 function insertTop(list, entry, limit) {
   const next = list.filter((item) => item.ip !== entry.ip);
   return (
     next.push(entry),
-    next.sort(compareEligibility),
+    next.sort(compareEligibilitySummaries),
     next.slice(0, limit)
   );
 }
@@ -509,7 +495,7 @@ export async function runHardScan({
               existing = entries.find((item) => item.ip === entry.ip);
             (existing && entries.splice(entries.indexOf(existing), 1),
               entries.push(entry),
-              entries.sort(compareEligibility),
+              entries.sort(compareEligibilitySummaries),
               entries.length > limit && (entries.length = limit));
           } catch {}
       }
@@ -524,7 +510,7 @@ export async function runHardScan({
       ),
       ...retrySummaries,
     ]
-      .sort(compareEligibility)
+      .sort(compareEligibilitySummaries)
       .slice(0, settings.hard.finalTop),
     verified = await (async function ({
       candidates,
@@ -628,7 +614,7 @@ export async function runHardScan({
         }),
         candidates
           .map((entry) => verifiedByIp.get(entry.ip) || entry)
-          .sort(compareEligibility)
+          .sort(compareEligibilitySummaries)
       );
     })({ candidates: finalists, settings, vless, logger, onProgress }),
     { xrayInfo, tunnelResults } = await (async function ({
