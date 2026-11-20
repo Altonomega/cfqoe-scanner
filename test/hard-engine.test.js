@@ -439,6 +439,15 @@ test('crash/resume: a wave-aligned checkpoint resumes into the identical probe s
     resumedResult.totals.reserveProbes,
     partResult.totals.reserveProbes,
   );
+  // Part 1 expanded blocks before the interruption, and the resumed
+  // run rebuilds blocksExpanded from the per-block expansionProbes
+  // counters — so those counters must ride the checkpoint, or blocks
+  // expanded only before the crash silently drop out of the count.
+  assert.ok(partResult.totals.blocksExpanded > 0);
+  assert.equal(
+    resumedResult.totals.blocksExpanded,
+    fullResult.totals.blocksExpanded,
+  );
   assert.deepEqual(
     resumedResult.pool.map((summary) => summary.ip).sort(),
     fullResult.pool.map((summary) => summary.ip).sort(),

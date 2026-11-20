@@ -204,6 +204,7 @@ function serializeBlockState(allStates, totals) {
       hardDead: state.hardDead,
       addressesExhausted: state.addressesExhausted,
       retired: state.retired,
+      expansionProbes: state.expansionProbes,
       children: state.children,
       records: [...state.records.values()].map((record) => ({
         candidate: record.candidate,
@@ -316,6 +317,7 @@ export async function runBlockScreening({
     state.extensionCounted = Boolean(entry.extensionCounted);
     state.hardDead = Boolean(entry.hardDead);
     state.addressesExhausted = Boolean(entry.addressesExhausted);
+    state.expansionProbes = entry.expansionProbes ?? 0;
     state.children = entry.children ?? null;
     for (const saved of entry.records ?? []) {
       const summary = buildEligibilitySummary({
