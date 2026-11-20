@@ -1,1 +1,495 @@
-import{performance as t}from"node:perf_hooks";import{createHttpClient as e}from"../net/http.js";const s=1048576;export const DEFAULT_MAX_DOWNLOAD_BYTES=24*s;export const DEFAULT_LOAD_ENDPOINTS={download:"https://speed.cloudflare.com/__down",upload:"https://speed.cloudflare.com/__up",ping:"https://speed.cloudflare.com/__down?bytes=1000",control:"https://ash-speed.hetzner.com/100MB.bin"};function n(t,e){return!Number.isFinite(t)||!Number.isFinite(e)||e<=0?null:8*t/(e/1e3)/1e6}function o(t,e=2){if("number"!=typeof t||!Number.isFinite(t))return null;const s=10**e;return Math.round(t*s)/s}export function quantile(t,e){const s=function(t){return t.filter(t=>"number"==typeof t&&Number.isFinite(t)).sort((t,e)=>t-e)}(t);if(0===s.length)return null;if(1===s.length)return s[0];const n=(s.length-1)*e,o=Math.floor(n),l=Math.ceil(n);return o===l?s[o]:s[o]+(s[l]-s[o])*(n-o)}export function createByteBudget(t){const e=Math.max(0,Math.floor(Number(t)||0));let s=0;return{reserve(t){const n=Math.max(0,e-s),o=Math.min(n,Math.max(0,Math.floor(Number(t)||0)));return s+=o,o},get limitBytes(){return e},get reservedBytes(){return s},get remainingBytes(){return Math.max(0,e-s)}}}export function summarizeWindows(t=[]){const e=t.filter(t=>t&&t.ok&&t.ms>0&&t.bytes>0),s={samples:0,sustainedMbps:null,peakMbps:null,earlyMbps:null,lateMbps:null,shapingRatio:null,totalBytes:0,totalMs:0,failures:t.length-e.length};if(0===e.length)return s;const l=e.reduce((t,e)=>t+e.bytes,0),a=e.reduce((t,e)=>t+e.ms,0),r=e.map(t=>n(t.bytes,t.ms)),u=Math.max(1,Math.floor(e.length/3)),i=quantile(r.slice(0,u),.5),m=quantile(r.slice(-u),.5),p=e.length>=3&&i>0;return{samples:e.length,sustainedMbps:o(n(l,a)),peakMbps:o(Math.max(...r)),earlyMbps:o(i),lateMbps:o(m),shapingRatio:p?o(Math.min(m/i,2),3):null,totalBytes:l,totalMs:o(a),failures:t.length-e.length}}export function summarizeSaturation({windows:t=[],wallClockMs:e=null,flows:s=1}={}){const l=t.filter(t=>t&&t.ok&&t.bytes>0),a=t.length-l.length;if(0===l.length||!Number.isFinite(e)||e<=0)return{flows:s,samples:0,failures:a,totalBytes:0,wallClockMs:o(e),sustainedMbps:null,peakMbps:null,earlyMbps:null,lateMbps:null,shapingRatio:null,perFlowMbps:null};const r=l.reduce((t,e)=>t+e.bytes,0),u=l.map(t=>n(t.bytes,t.ms)).filter(t=>null!==t),i=new Map;for(const t of l){const e=Number.isFinite(t.flow)?t.flow:0;i.has(e)||i.set(e,[]),i.get(e).push(t)}let m=null,p=null;const c=[...i.values()].filter(t=>t.length>=2);c.length>0&&(m=quantile(c.map(t=>n(t[0].bytes,t[0].ms)),.5),p=quantile(c.map(t=>{const e=t.at(-1);return n(e.bytes,e.ms)}),.5));const f="number"==typeof m&&m>0&&"number"==typeof p,M=n(r,e);return{flows:s,samples:l.length,failures:a,totalBytes:r,wallClockMs:o(e),sustainedMbps:o(M),peakMbps:u.length?o(Math.max(...u)):null,earlyMbps:o(m),lateMbps:o(p),shapingRatio:f?o(Math.min(p/m,2),3):null,perFlowMbps:o(M/Math.max(1,s))}}export function loadLatencyTimeout(t){return Math.min(Math.max(1,Number(t)||1),3e3)}export function responsivenessRpm(t){return"number"!=typeof t||!Number.isFinite(t)||t<=0?null:o(6e4/t)}export function summarizeLatency({idle:t=[],loaded:e=[],attempts:s=0,failures:n=0}={}){const l=quantile(t,.5),a=quantile(e,.5),r=quantile(e,.95),u=s||t.length+e.length+n,i="number"==typeof l&&"number"==typeof a;return{idleRttMs:o(l),loadedRttMs:o(a),loadedP95Ms:o(r),rttIncreaseMs:i?o(Math.max(0,a-l)):null,rttInflation:i&&l>0?o(Math.max(1,a/l),2):null,rpm:responsivenessRpm(a),idleRpm:responsivenessRpm(l),jitterMs:"number"==typeof r&&"number"==typeof a?o(r-a):null,lossRate:u>0?o(n/u,4):null,samples:{idle:t.length,loaded:e.length,attempts:u,failures:n}}}export function summarizeFanout(t=[],e=null){if(0===t.length)return{requests:0,fanoutSuccess:null,freshConnectionMs:null,wallClockMs:null};const s=t.filter(t=>t&&t.ok),n=s.map(t=>"number"==typeof t.ttfbMs?t.ttfbMs:t.totalMs).filter(Number.isFinite);return{requests:t.length,fanoutSuccess:o(s.length/t.length,4),freshConnectionMs:o(quantile(n,.9)),wallClockMs:o(e)}}export function summarizeControl({edgeMbps:t,controlMbps:e}={}){const s="number"==typeof t&&Number.isFinite(t)&&"number"==typeof e&&Number.isFinite(e)&&e>0;return{controlMbps:o(e),edgeMbps:o(t),edgeShare:s?o(t/e,3):null,bottleneck:s?t/e<.6?"cloudflare-edge":"local-or-server":null}}export function toGateMetrics({downlink:t,latency:e,fanout:s,uplink:n}={}){return{sustainedMbps:t?.sustainedMbps??null,shapingRatio:t?.shapingRatio??null,rpm:e?.rpm??null,rttIncreaseMs:e?.rttIncreaseMs??null,rttInflation:e?.rttInflation??null,jitterMs:e?.jitterMs??null,lossRate:e?.lossRate??null,fanoutSuccess:s?.fanoutSuccess??null,freshConnectionMs:s?.freshConnectionMs??null,uplinkMbps:n?.sustainedMbps??null}}function l(t,e){return t.includes("{bytes}")?t.replace("{bytes}",String(e)):`${t}${t.includes("?")?"&":"?"}bytes=${e}`}export async function runLoadProbe({proxy:a=null,endpoints:r=DEFAULT_LOAD_ENDPOINTS,durationMs:u=12e3,chunkBytes:i=1*s,maxDownloadBytes:m=25165824,flows:p=4,uploadBytes:c=2*s,uploadFlows:f=2,fanoutRequests:M=6,idleSamples:b=4,timeoutMs:y=2e4,control:h=!1,controlBytes:d=6*s}={}){const w=r.ping||DEFAULT_LOAD_ENDPOINTS.ping,g=r.download||DEFAULT_LOAD_ENDPOINTS.download,x=r.upload||DEFAULT_LOAD_ENDPOINTS.upload,k=r.control||DEFAULT_LOAD_ENDPOINTS.control,B=Math.max(1,Math.floor(p)),N=Math.max(1,Math.floor(f)),D=createByteBudget(m),F=loadLatencyTimeout(y),S=e({proxy:a,timeoutMs:F,maxSockets:1}),_=Array.from({length:B},()=>e({proxy:a,timeoutMs:y,maxSockets:1})),q=Array.from({length:N},()=>e({proxy:a,timeoutMs:y,maxSockets:1})),A=e({proxy:a,timeoutMs:y,maxSockets:M});try{const s=await async function({client:t,url:e,samples:s}){const n=[];let o=0;for(let l=0;l<s;l+=1){const s=await t.request(e,{maxBytes:65536});s.ok&&"number"==typeof s.ttfbMs?n.push(s.ttfbMs):o+=1}return{values:n,failures:o}}({client:S,url:w,samples:b}),r=[];let m=0,p=0,f=!0;const L=t.now(),T=(async()=>{for(;f;){p+=1;const t=await S.request(w,{maxBytes:65536});t.ok&&"number"==typeof t.ttfbMs?r.push(t.ttfbMs):m+=1,await new Promise(t=>setTimeout(t,250))}})(),R=[],O=L+u;await Promise.all(_.map(async(e,s)=>{let n=0;for(;t.now()<O&&n<2;){const a=D.reserve(i);if(a<=0)break;const r=await e.request(l(g,a),{maxBytes:a}),u="number"==typeof r.ttfbMs&&"number"==typeof r.totalMs?Math.max(r.totalMs-r.ttfbMs,1):r.totalMs,m=Boolean(r.ok)&&r.bytes>0;n=m?0:n+1,R.push({flow:s,bytes:r.bytes,requestedBytes:a,ms:u,ok:m,offsetMs:o(t.now()-L)})}}));const E=t.now()-L;f=!1,await T;const v=t.now(),C=await Promise.all(Array.from({length:M},()=>A.request(l(g,131072),{maxBytes:131072,keepAlive:!1}))),P=t.now()-v,I=Math.max(1,Math.ceil(c/N)),z=Math.min(I,524288),U=[],j=t.now();await Promise.all(q.map(async(e,s)=>{let n=0;for(;n<I;){const l=Math.min(z,I-n),a=Buffer.alloc(l,97),r=await e.request(x,{method:"POST",body:a,maxBytes:131072});if(U.push({flow:s,bytes:r.ok?l:0,ms:r.totalMs,ok:Boolean(r.ok),offsetMs:o(t.now()-j)}),n+=l,!r.ok)break}}));const $=t.now()-j,G=summarizeSaturation({windows:R,wallClockMs:E,flows:B});let W=null;if(h){const t=e({proxy:a,timeoutMs:y,maxSockets:1});try{const e=await t.request(k,{maxBytes:d}),s="number"==typeof e.ttfbMs&&"number"==typeof e.totalMs?Math.max(e.totalMs-e.ttfbMs,1):e.totalMs;W=summarizeControl({edgeMbps:G.sustainedMbps,controlMbps:e.ok?n(e.bytes,s):null})}finally{t.close()}}const X=summarizeLatency({idle:s.values,loaded:r,attempts:b+p,failures:s.failures+m}),Y=summarizeFanout(C,P),H=summarizeSaturation({windows:U,wallClockMs:$,flows:N});return{ok:G.samples>0,downlink:G,latency:X,fanout:Y,uplink:H,control:W,gateMetrics:toGateMetrics({downlink:G,latency:X,fanout:Y,uplink:H}),budget:{durationMs:u,chunkBytes:i,flows:B,maxDownloadBytes:D.limitBytes,reservedDownloadBytes:D.reservedBytes,uploadBytes:c,uploadFlows:N,fanoutRequests:M,latencyTimeoutMs:F}}}finally{S.close(),A.close();for(const t of _)t.close();for(const t of q)t.close()}}
+import { performance } from "node:perf_hooks";
+import { createHttpClient } from "../net/http.js";
+const MIB = 1048576;
+export const DEFAULT_MAX_DOWNLOAD_BYTES = 24 * MIB;
+export const DEFAULT_LOAD_ENDPOINTS = {
+  download: "https://speed.cloudflare.com/__down",
+  upload: "https://speed.cloudflare.com/__up",
+  ping: "https://speed.cloudflare.com/__down?bytes=1000",
+  control: "https://ash-speed.hetzner.com/100MB.bin",
+};
+// Megabits per second for a byte count over a duration; null when the
+// duration cannot support a rate.
+function toMbps(bytes, durationMs) {
+  return !Number.isFinite(bytes) || !Number.isFinite(durationMs) || durationMs <= 0
+    ? null
+    : (8 * bytes) / (durationMs / 1e3) / 1e6;
+}
+function roundTo(value, digits = 2) {
+  if ("number" != typeof value || !Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+export function quantile(values, q) {
+  const sorted = values
+    .filter((value) => "number" == typeof value && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (0 === sorted.length) return null;
+  if (1 === sorted.length) return sorted[0];
+  const rank = (sorted.length - 1) * q,
+    lower = Math.floor(rank),
+    upper = Math.ceil(rank);
+  return lower === upper
+    ? sorted[lower]
+    : sorted[lower] + (sorted[upper] - sorted[lower]) * (rank - lower);
+}
+export function createByteBudget(limit) {
+  const limitBytes = Math.max(0, Math.floor(Number(limit) || 0));
+  let reservedBytes = 0;
+  return {
+    // Grants at most the remaining budget; returns the granted amount.
+    reserve(amount) {
+      const available = Math.max(0, limitBytes - reservedBytes),
+        granted = Math.min(
+          available,
+          Math.max(0, Math.floor(Number(amount) || 0)),
+        );
+      reservedBytes += granted;
+      return granted;
+    },
+    get limitBytes() {
+      return limitBytes;
+    },
+    get reservedBytes() {
+      return reservedBytes;
+    },
+    get remainingBytes() {
+      return Math.max(0, limitBytes - reservedBytes);
+    },
+  };
+}
+export function summarizeWindows(windows = []) {
+  const okWindows = windows.filter(
+      (window) => window && window.ok && window.ms > 0 && window.bytes > 0,
+    ),
+    summary = {
+      samples: 0,
+      sustainedMbps: null,
+      peakMbps: null,
+      earlyMbps: null,
+      lateMbps: null,
+      shapingRatio: null,
+      totalBytes: 0,
+      totalMs: 0,
+      failures: windows.length - okWindows.length,
+    };
+  if (0 === okWindows.length) return summary;
+  const totalBytes = okWindows.reduce((sum, window) => sum + window.bytes, 0),
+    totalMs = okWindows.reduce((sum, window) => sum + window.ms, 0),
+    rates = okWindows.map((window) => toMbps(window.bytes, window.ms)),
+    third = Math.max(1, Math.floor(okWindows.length / 3)),
+    earlyMedian = quantile(rates.slice(0, third), 0.5),
+    lateMedian = quantile(rates.slice(-third), 0.5),
+    // Shaping compares the first and last thirds; needs at least 3 windows.
+    hasShaping = okWindows.length >= 3 && earlyMedian > 0;
+  return {
+    samples: okWindows.length,
+    sustainedMbps: roundTo(toMbps(totalBytes, totalMs)),
+    peakMbps: roundTo(Math.max(...rates)),
+    earlyMbps: roundTo(earlyMedian),
+    lateMbps: roundTo(lateMedian),
+    shapingRatio: hasShaping
+      ? roundTo(Math.min(lateMedian / earlyMedian, 2), 3)
+      : null,
+    totalBytes,
+    totalMs: roundTo(totalMs),
+    failures: windows.length - okWindows.length,
+  };
+}
+export function summarizeSaturation({
+  windows = [],
+  wallClockMs = null,
+  flows = 1,
+} = {}) {
+  const okWindows = windows.filter(
+      (window) => window && window.ok && window.bytes > 0,
+    ),
+    failures = windows.length - okWindows.length;
+  if (
+    0 === okWindows.length ||
+    !Number.isFinite(wallClockMs) ||
+    wallClockMs <= 0
+  )
+    return {
+      flows,
+      samples: 0,
+      failures,
+      totalBytes: 0,
+      wallClockMs: roundTo(wallClockMs),
+      sustainedMbps: null,
+      peakMbps: null,
+      earlyMbps: null,
+      lateMbps: null,
+      shapingRatio: null,
+      perFlowMbps: null,
+    };
+  const totalBytes = okWindows.reduce((sum, window) => sum + window.bytes, 0),
+    rates = okWindows
+      .map((window) => toMbps(window.bytes, window.ms))
+      .filter((rate) => null !== rate),
+    byFlow = new Map();
+  for (const window of okWindows) {
+    const flow = Number.isFinite(window.flow) ? window.flow : 0;
+    if (!byFlow.has(flow)) byFlow.set(flow, []);
+    byFlow.get(flow).push(window);
+  }
+  let earlyMedian = null,
+    lateMedian = null;
+  const multiWindowFlows = [...byFlow.values()].filter(
+    (flowWindows) => flowWindows.length >= 2,
+  );
+  if (multiWindowFlows.length > 0) {
+    earlyMedian = quantile(
+      multiWindowFlows.map((flowWindows) =>
+        toMbps(flowWindows[0].bytes, flowWindows[0].ms),
+      ),
+      0.5,
+    );
+    lateMedian = quantile(
+      multiWindowFlows.map((flowWindows) => {
+        const last = flowWindows.at(-1);
+        return toMbps(last.bytes, last.ms);
+      }),
+      0.5,
+    );
+  }
+  const hasShaping =
+      "number" == typeof earlyMedian &&
+      earlyMedian > 0 &&
+      "number" == typeof lateMedian,
+    aggregateMbps = toMbps(totalBytes, wallClockMs);
+  return {
+    flows,
+    samples: okWindows.length,
+    failures,
+    totalBytes,
+    wallClockMs: roundTo(wallClockMs),
+    sustainedMbps: roundTo(aggregateMbps),
+    peakMbps: rates.length ? roundTo(Math.max(...rates)) : null,
+    earlyMbps: roundTo(earlyMedian),
+    lateMbps: roundTo(lateMedian),
+    shapingRatio: hasShaping
+      ? roundTo(Math.min(lateMedian / earlyMedian, 2), 3)
+      : null,
+    perFlowMbps: roundTo(aggregateMbps / Math.max(1, flows)),
+  };
+}
+export function loadLatencyTimeout(timeoutMs) {
+  return Math.min(Math.max(1, Number(timeoutMs) || 1), 3e3);
+}
+export function responsivenessRpm(medianMs) {
+  return "number" != typeof medianMs || !Number.isFinite(medianMs) || medianMs <= 0
+    ? null
+    : roundTo(6e4 / medianMs);
+}
+export function summarizeLatency({
+  idle = [],
+  loaded = [],
+  attempts = 0,
+  failures = 0,
+} = {}) {
+  const idleMedian = quantile(idle, 0.5),
+    loadedMedian = quantile(loaded, 0.5),
+    loadedP95 = quantile(loaded, 0.95),
+    totalAttempts = attempts || idle.length + loaded.length + failures,
+    hasBoth = "number" == typeof idleMedian && "number" == typeof loadedMedian;
+  return {
+    idleRttMs: roundTo(idleMedian),
+    loadedRttMs: roundTo(loadedMedian),
+    loadedP95Ms: roundTo(loadedP95),
+    rttIncreaseMs: hasBoth
+      ? roundTo(Math.max(0, loadedMedian - idleMedian))
+      : null,
+    rttInflation:
+      hasBoth && idleMedian > 0
+        ? roundTo(Math.max(1, loadedMedian / idleMedian), 2)
+        : null,
+    rpm: responsivenessRpm(loadedMedian),
+    idleRpm: responsivenessRpm(idleMedian),
+    jitterMs:
+      "number" == typeof loadedP95 && "number" == typeof loadedMedian
+        ? roundTo(loadedP95 - loadedMedian)
+        : null,
+    lossRate: totalAttempts > 0 ? roundTo(failures / totalAttempts, 4) : null,
+    samples: {
+      idle: idle.length,
+      loaded: loaded.length,
+      attempts: totalAttempts,
+      failures,
+    },
+  };
+}
+export function summarizeFanout(results = [], wallClockMs = null) {
+  if (0 === results.length)
+    return {
+      requests: 0,
+      fanoutSuccess: null,
+      freshConnectionMs: null,
+      wallClockMs: null,
+    };
+  const succeeded = results.filter((result) => result && result.ok),
+    times = succeeded
+      .map((result) =>
+        "number" == typeof result.ttfbMs ? result.ttfbMs : result.totalMs,
+      )
+      .filter(Number.isFinite);
+  return {
+    requests: results.length,
+    fanoutSuccess: roundTo(succeeded.length / results.length, 4),
+    freshConnectionMs: roundTo(quantile(times, 0.9)),
+    wallClockMs: roundTo(wallClockMs),
+  };
+}
+export function summarizeControl({ edgeMbps, controlMbps } = {}) {
+  const comparable =
+    "number" == typeof edgeMbps &&
+    Number.isFinite(edgeMbps) &&
+    "number" == typeof controlMbps &&
+    Number.isFinite(controlMbps) &&
+    controlMbps > 0;
+  return {
+    controlMbps: roundTo(controlMbps),
+    edgeMbps: roundTo(edgeMbps),
+    edgeShare: comparable ? roundTo(edgeMbps / controlMbps, 3) : null,
+    bottleneck: comparable
+      ? edgeMbps / controlMbps < 0.6
+        ? "cloudflare-edge"
+        : "local-or-server"
+      : null,
+  };
+}
+export function toGateMetrics({ downlink, latency, fanout, uplink } = {}) {
+  return {
+    sustainedMbps: downlink?.sustainedMbps ?? null,
+    shapingRatio: downlink?.shapingRatio ?? null,
+    rpm: latency?.rpm ?? null,
+    rttIncreaseMs: latency?.rttIncreaseMs ?? null,
+    rttInflation: latency?.rttInflation ?? null,
+    jitterMs: latency?.jitterMs ?? null,
+    lossRate: latency?.lossRate ?? null,
+    fanoutSuccess: fanout?.fanoutSuccess ?? null,
+    freshConnectionMs: fanout?.freshConnectionMs ?? null,
+    uplinkMbps: uplink?.sustainedMbps ?? null,
+  };
+}
+function withBytesParam(url, bytes) {
+  return url.includes("{bytes}")
+    ? url.replace("{bytes}", String(bytes))
+    : `${url}${url.includes("?") ? "&" : "?"}bytes=${bytes}`;
+}
+async function sampleIdleLatency({ client, url, samples }) {
+  const values = [];
+  let failures = 0;
+  for (let index = 0; index < samples; index += 1) {
+    const response = await client.request(url, { maxBytes: 65536 });
+    if (response.ok && "number" == typeof response.ttfbMs)
+      values.push(response.ttfbMs);
+    else failures += 1;
+  }
+  return { values, failures };
+}
+export async function runLoadProbe({
+  proxy = null,
+  endpoints = DEFAULT_LOAD_ENDPOINTS,
+  durationMs = 12e3,
+  chunkBytes = 1 * MIB,
+  maxDownloadBytes = 25165824,
+  flows = 4,
+  uploadBytes = 2 * MIB,
+  uploadFlows = 2,
+  fanoutRequests = 6,
+  idleSamples = 4,
+  timeoutMs = 2e4,
+  control = false,
+  controlBytes = 6 * MIB,
+} = {}) {
+  const pingUrl = endpoints.ping || DEFAULT_LOAD_ENDPOINTS.ping,
+    downloadUrl = endpoints.download || DEFAULT_LOAD_ENDPOINTS.download,
+    uploadUrl = endpoints.upload || DEFAULT_LOAD_ENDPOINTS.upload,
+    controlUrl = endpoints.control || DEFAULT_LOAD_ENDPOINTS.control,
+    flowCount = Math.max(1, Math.floor(flows)),
+    uploadFlowCount = Math.max(1, Math.floor(uploadFlows)),
+    budget = createByteBudget(maxDownloadBytes),
+    latencyTimeout = loadLatencyTimeout(timeoutMs),
+    latencyClient = createHttpClient({
+      proxy,
+      timeoutMs: latencyTimeout,
+      maxSockets: 1,
+    }),
+    downloadClients = Array.from({ length: flowCount }, () =>
+      createHttpClient({ proxy, timeoutMs, maxSockets: 1 }),
+    ),
+    uploadClients = Array.from({ length: uploadFlowCount }, () =>
+      createHttpClient({ proxy, timeoutMs, maxSockets: 1 }),
+    ),
+    fanoutClient = createHttpClient({
+      proxy,
+      timeoutMs,
+      maxSockets: fanoutRequests,
+    });
+  try {
+    const idle = await sampleIdleLatency({
+        client: latencyClient,
+        url: pingUrl,
+        samples: idleSamples,
+      }),
+      loadedSamples = [];
+    let loadedFailures = 0,
+      loadedAttempts = 0,
+      loading = true;
+    const startedAt = performance.now(),
+      // Background loop: keeps sampling latency for the whole download stage.
+      latencyLoop = (async () => {
+        while (loading) {
+          loadedAttempts += 1;
+          const response = await latencyClient.request(pingUrl, {
+            maxBytes: 65536,
+          });
+          if (response.ok && "number" == typeof response.ttfbMs)
+            loadedSamples.push(response.ttfbMs);
+          else loadedFailures += 1;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      })(),
+      windows = [],
+      deadline = startedAt + durationMs;
+    await Promise.all(
+      downloadClients.map(async (client, flow) => {
+        let consecutiveFailures = 0;
+        while (performance.now() < deadline && consecutiveFailures < 2) {
+          const granted = budget.reserve(chunkBytes);
+          if (granted <= 0) break;
+          const response = await client.request(
+              withBytesParam(downloadUrl, granted),
+              { maxBytes: granted },
+            ),
+            transferMs =
+              "number" == typeof response.ttfbMs &&
+              "number" == typeof response.totalMs
+                ? Math.max(response.totalMs - response.ttfbMs, 1)
+                : response.totalMs,
+            ok = Boolean(response.ok) && response.bytes > 0;
+          consecutiveFailures = ok ? 0 : consecutiveFailures + 1;
+          windows.push({
+            flow,
+            bytes: response.bytes,
+            requestedBytes: granted,
+            ms: transferMs,
+            ok,
+            offsetMs: roundTo(performance.now() - startedAt),
+          });
+        }
+      }),
+    );
+    const wallClockMs = performance.now() - startedAt;
+    loading = false;
+    await latencyLoop;
+    const fanoutStartedAt = performance.now(),
+      fanoutResults = await Promise.all(
+        Array.from({ length: fanoutRequests }, () =>
+          fanoutClient.request(withBytesParam(downloadUrl, 131072), {
+            maxBytes: 131072,
+            keepAlive: false,
+          }),
+        ),
+      ),
+      fanoutWallClockMs = performance.now() - fanoutStartedAt,
+      perFlowUploadBytes = Math.max(
+        1,
+        Math.ceil(uploadBytes / uploadFlowCount),
+      ),
+      uploadChunkBytes = Math.min(perFlowUploadBytes, 524288),
+      uploadWindows = [],
+      uploadStartedAt = performance.now();
+    await Promise.all(
+      uploadClients.map(async (client, flow) => {
+        let sent = 0;
+        while (sent < perFlowUploadBytes) {
+          const size = Math.min(uploadChunkBytes, perFlowUploadBytes - sent),
+            body = Buffer.alloc(size, 97),
+            response = await client.request(uploadUrl, {
+              method: "POST",
+              body,
+              maxBytes: 131072,
+            });
+          uploadWindows.push({
+            flow,
+            bytes: response.ok ? size : 0,
+            ms: response.totalMs,
+            ok: Boolean(response.ok),
+            offsetMs: roundTo(performance.now() - uploadStartedAt),
+          });
+          sent += size;
+          if (!response.ok) break;
+        }
+      }),
+    );
+    const uploadWallClockMs = performance.now() - uploadStartedAt,
+      downlink = summarizeSaturation({
+        windows,
+        wallClockMs,
+        flows: flowCount,
+      });
+    let controlResult = null;
+    if (control) {
+      const controlClient = createHttpClient({
+        proxy,
+        timeoutMs,
+        maxSockets: 1,
+      });
+      try {
+        const response = await controlClient.request(controlUrl, {
+            maxBytes: controlBytes,
+          }),
+          transferMs =
+            "number" == typeof response.ttfbMs &&
+            "number" == typeof response.totalMs
+              ? Math.max(response.totalMs - response.ttfbMs, 1)
+              : response.totalMs;
+        controlResult = summarizeControl({
+          edgeMbps: downlink.sustainedMbps,
+          controlMbps: response.ok ? toMbps(response.bytes, transferMs) : null,
+        });
+      } finally {
+        controlClient.close();
+      }
+    }
+    const latency = summarizeLatency({
+        idle: idle.values,
+        loaded: loadedSamples,
+        attempts: idleSamples + loadedAttempts,
+        failures: idle.failures + loadedFailures,
+      }),
+      fanout = summarizeFanout(fanoutResults, fanoutWallClockMs),
+      uplink = summarizeSaturation({
+        windows: uploadWindows,
+        wallClockMs: uploadWallClockMs,
+        flows: uploadFlowCount,
+      });
+    return {
+      ok: downlink.samples > 0,
+      downlink,
+      latency,
+      fanout,
+      uplink,
+      control: controlResult,
+      gateMetrics: toGateMetrics({ downlink, latency, fanout, uplink }),
+      budget: {
+        durationMs,
+        chunkBytes,
+        flows: flowCount,
+        maxDownloadBytes: budget.limitBytes,
+        reservedDownloadBytes: budget.reservedBytes,
+        uploadBytes,
+        uploadFlows: uploadFlowCount,
+        fanoutRequests,
+        latencyTimeoutMs: latencyTimeout,
+      },
+    };
+  } finally {
+    latencyClient.close();
+    fanoutClient.close();
+    for (const client of downloadClients) client.close();
+    for (const client of uploadClients) client.close();
+  }
+}
