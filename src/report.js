@@ -21,8 +21,12 @@ import {
   buildVerdict,
   GATE_DEFINITIONS,
 } from "./measurement/gates.js";
+import { VERSION } from "./version.js";
 export const REPORT_SCHEMA = 10;
-export const GENERATOR_VERSION = "0.8.6";
+// The report's version stamp is the single-sourced application version
+// (src/version.js ← package.json), never a literal: a hand-maintained
+// copy here is exactly how report versions drift from the release.
+export const GENERATOR_VERSION = VERSION;
 export const VERDICT_RANK = {
   recommended: 0,
   good: 1,
@@ -640,9 +644,9 @@ export function writeReport({
   fs.mkdirSync(directory, { recursive: !0 });
   const ranked = rankCandidates(candidates),
     report = {
-      schema: 10,
+      schema: REPORT_SCHEMA,
       generator: "cfqoe-scanner",
-      version: "0.8.6",
+      version: GENERATOR_VERSION,
       scoreLabel: "Experimental CFQoE Score",
       scope: "run-relative",
       runId,

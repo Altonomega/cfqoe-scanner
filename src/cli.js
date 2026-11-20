@@ -1,6 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { banner, color, table, writeProgress, clearProgress } from "./ui.js";
+import {
+  banner,
+  color,
+  table,
+  writeProgress,
+  clearProgress,
+  phaseLabel,
+  hardRunSummaryLines,
+  catalogLine,
+} from "./ui.js";
 import {
   ensureDirectories,
   readSecretFile,
@@ -11,6 +20,7 @@ import { loadSettings, saveSettings } from "./config/settings.js";
 import { parseVlessUri, describeVless } from "./config/vless.js";
 import { locateXray, xrayVersion, xrayInstallHint } from "./platform/xray.js";
 import { createLogger, summarizeLogFile } from "./logging/logger.js";
+import { emitRunStart, emitRunEnd } from "./logging/lifecycle.js";
 import { runScan } from "./scan.js";
 import { runHardScan } from "./hard-scan.js";
 import { runMenu, quickProfile, researchProfile } from "./menu/index.js";
@@ -176,8 +186,15 @@ function printResults(results, limit = 15) {
     : console.log(color.yellow("No candidates were measured."));
 }
 async function runScanCommand(parsed, { profile }) {
-  const layout = ensureDirectories(),
-    baseSettings = loadSettings(layout.settingsFile),
+  const layout = ensureDirectories();
+  if (!fs.existsSync(layout.secretFile))
+    throw new Error('No configuration stored. Run: cfqoe import "vless://..."');
+  // Bootstrap order: the logger exists before settings load (so a
+  // migration or a corrupt settings file is recorded in this run's
+  // log), then it is re-leveled from the loaded settings and the CLI
+  // overrides applied on top of them.
+  const logger = createLogger({ level: "info", directory: layout.logs }),
+    baseSettings = loadSettings(layout.settingsFile, { logger }),
     settings = applyOptions(
       "quick" === profile
         ? quickProfile(baseSettings)
@@ -186,14 +203,11 @@ async function runScanCommand(parsed, { profile }) {
           : baseSettings,
       parsed,
     );
-  if (!fs.existsSync(layout.secretFile))
-    throw new Error('No configuration stored. Run: cfqoe import "vless://..."');
-  const logger = createLogger({
-    level: settings.logging.level,
-    directory: layout.logs,
-  });
+  logger.setLevel(settings.logging.level);
   (console.log(`${banner()}\n`),
     console.log(`Run id: ${logger.runId}   profile: ${profile}\n`));
+  const startedAt = Date.now();
+  emitRunStart(logger, { mode: profile });
   try {
     const result = await runScan({
       vlessUri: readSecretFile(layout.secretFile),
@@ -201,7 +215,19 @@ async function runScanCommand(parsed, { profile }) {
       layout,
       logger,
       runId: logger.runId,
-      onProgress: (progress) => writeProgress(progress.phase, progress),
+      onProgress: (progress) =>
+        writeProgress(phaseLabel(progress.phase), {
+          ...progress,
+          elapsedMs: Date.now() - startedAt,
+        }),
+    });
+    emitRunEnd(logger, {
+      status: "completed",
+      startedAt,
+      totals: {
+        eligible: result.eligibleCount,
+        candidates: result.candidateCount,
+      },
     });
     return (
       clearProgress(),
@@ -219,19 +245,28 @@ async function runScanCommand(parsed, { profile }) {
       printResults(result.report.results),
       0
     );
+  } catch (error) {
+    emitRunEnd(logger, {
+      status: "failed",
+      startedAt,
+      error: { class: "internal", message: error.message },
+    });
+    throw error;
   } finally {
     await logger.close();
   }
 }
 async function runHardCommand(parsed, { resume }) {
-  const layout = ensureDirectories(),
-    settings = applyOptions(loadSettings(layout.settingsFile), parsed);
+  const layout = ensureDirectories();
   if (!fs.existsSync(layout.secretFile))
     throw new Error('No configuration stored. Run: cfqoe import "vless://..."');
-  const logger = createLogger({
-    level: settings.logging.level,
-    directory: layout.logs,
-  });
+  // Bootstrap logger before settings load — see runScanCommand.
+  const logger = createLogger({ level: "info", directory: layout.logs }),
+    settings = applyOptions(
+      loadSettings(layout.settingsFile, { logger }),
+      parsed,
+    );
+  logger.setLevel(settings.logging.level);
   (console.log(`${banner()}\n`),
     console.log(
       `${resume ? "Resuming" : "Starting"} hard scan. Run id: ${logger.runId}`,
@@ -239,6 +274,8 @@ async function runHardCommand(parsed, { resume }) {
     console.log(
       color.dim("Checkpointed mode: press Q or Ctrl+C to stop safely.\n"),
     ));
+  const startedAt = Date.now();
+  emitRunStart(logger, { mode: "hard", resume });
   try {
     const result = await runHardScan({
       vlessUri: readSecretFile(layout.secretFile),
@@ -247,7 +284,20 @@ async function runHardCommand(parsed, { resume }) {
       logger,
       runId: logger.runId,
       resume,
-      onProgress: (progress) => writeProgress(progress.phase, progress),
+      onStart: (info) => console.log(color.dim(catalogLine(info))),
+      onProgress: (progress) =>
+        writeProgress(phaseLabel(progress.phase), {
+          ...progress,
+          elapsedMs: Date.now() - startedAt,
+        }),
+    });
+    emitRunEnd(logger, {
+      status: result.canceled ? "canceled" : "completed",
+      startedAt,
+      totals: {
+        eligible: result.eligibleCount,
+        stoppedReason: result.stoppedReason ?? null,
+      },
     });
     return (
       clearProgress(),
@@ -256,11 +306,25 @@ async function runHardCommand(parsed, { resume }) {
           ? color.yellow("Hard scan paused safely.")
           : color.green("Hard scan completed."),
       ),
+      hardRunSummaryLines(result, {
+        elapsedMs: Date.now() - startedAt,
+      }).forEach((line) => console.log(line)),
+      result.xray &&
+        !result.xray.enabled &&
+        "xray_not_found" === result.xray.reason &&
+        console.log(color.dim(xrayInstallHint())),
       console.log(`Report:  ${result.jsonPath}`),
       console.log(`Ranking: ${result.topPath}\n`),
       printResults(result.report.results),
       0
     );
+  } catch (error) {
+    emitRunEnd(logger, {
+      status: "failed",
+      startedAt,
+      error: { class: "internal", message: error.message },
+    });
+    throw error;
   } finally {
     await logger.close();
   }

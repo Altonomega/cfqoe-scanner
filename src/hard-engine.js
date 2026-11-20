@@ -521,6 +521,9 @@ export async function runBlockScreening({
   // summarised and recorded in input order.
   async function probeChunk(candidates, phase) {
     if (!candidates.length) return;
+    if (phase === 'primer' || phase === 'coverage') {
+      emitPhaseStart(phase, candidates.length);
+    }
     const results = await runEligibilityBatch({
       candidates,
       rounds: screeningRounds,
@@ -539,6 +542,74 @@ export async function runBlockScreening({
     for (const { candidate, observations } of results) {
       recordResult(candidate, observations, phase);
     }
+    if (phase === 'primer' || phase === 'coverage') {
+      const uiPhase = phase === 'primer' ? 'hard-primer' : 'hard-split-coverage';
+      const payload = {
+        phase: uiPhase,
+        completed: phase === 'primer' ? totals.primerProbes : totals.reserveProbes,
+        total: phase === 'primer' ? primerTotal() : reserveSlice(),
+        eligible: totals.eligible,
+        failed: totals.failed,
+      };
+      onProgress(payload);
+      logProgress(uiPhase, payload);
+    }
+  }
+
+  // --- Progress emission (transparency) -----------------------------------
+  // probeChunk is the single batch funnel for primer, coverage and
+  // expansion, so it is the one honest place to emit progress: a
+  // phase-start event when a phase's first batch goes out (completed =
+  // the phase counter before this batch — 0 on a fresh run), then one
+  // event per completed batch for primer/coverage (expansion already
+  // reports per wave). Emission is observer-only: it reads counters
+  // after results are recorded and never touches draws, allocation or
+  // the onSummary order, so the probe sequence is unchanged.
+  const startedPhases = new Set();
+  const lastInfoProgressAt = new Map();
+
+  function primerTotal() {
+    return rootStates.reduce((sum, state) => sum + state.primerTarget, 0);
+  }
+
+  // The same payload the terminal renders, mirrored into the log: every
+  // batch at debug; at info at most one record per ~10 s per phase (the
+  // standing cadence ruling), so the file becomes a heartbeat without
+  // becoming a firehose.
+  function logProgress(uiPhase, payload) {
+    const details = {
+      completed: payload.completed,
+      total: payload.total,
+      eligible: payload.eligible,
+      failed: payload.failed,
+    };
+    log('debug', 'hard.engine.progress', details);
+    const nowMs = Date.now();
+    if (nowMs - (lastInfoProgressAt.get(uiPhase) ?? Number.NEGATIVE_INFINITY) >= 10000) {
+      lastInfoProgressAt.set(uiPhase, nowMs);
+      log('info', 'hard.engine.progress', details);
+    }
+  }
+
+  function emitPhaseStart(phase, batchSize) {
+    if (startedPhases.has(phase)) return;
+    startedPhases.add(phase);
+    if (logger && typeof logger.setPhase === 'function') {
+      logger.setPhase(phase);
+    }
+    const uiPhase = phase === 'primer' ? 'hard-primer' : 'hard-split-coverage';
+    onProgress({
+      phase: uiPhase,
+      completed: (phase === 'primer' ? totals.primerProbes : totals.reserveProbes) - batchSize,
+      total: phase === 'primer' ? primerTotal() : reserveSlice(),
+      eligible: totals.eligible,
+      failed: totals.failed,
+      ...(phase === 'primer'
+        ? {
+            note: `${blocks.length} blocks · skip ${tierCounts.skip} · confirm ${tierCounts.confirm} · full ${tierCounts.full}`,
+          }
+        : {}),
+    });
   }
 
   function checkDeadPathValve() {
@@ -938,7 +1009,17 @@ export async function runBlockScreening({
     }
   }
 
+  // Deliberate deviation, do not "fix": expansion emits NO phase-start
+  // event, unlike primer/coverage (see the emission note at probeChunk).
+  // The cancel/resume determinism contract keys on the first expansion
+  // event being a completed wave — a start event would arm a cancel
+  // before any expansion probe ran and shift the wave-aligned event
+  // sequence a resumed run must reproduce exactly. The first per-wave
+  // event below is this phase's announcement.
   async function runExpansionPhase() {
+    if (logger && typeof logger.setPhase === 'function') {
+      logger.setPhase('expansion');
+    }
     let consecutiveLowWaves = 0;
     while (!isCanceled() && !valve.aborted) {
       if (isBudgetExhausted({
@@ -1018,14 +1099,16 @@ export async function runBlockScreening({
         break;
       }
       applySplits();
-      onProgress({
+      const wavePayload = {
         phase: 'hard-expansion',
         completed: totals.probesSpent,
         total: hard.budgetProbes,
         eligible: totals.eligible,
         failed: totals.failed,
         note: `expansion wave complete; ${totals.expansionProbes} expansion probes spent`,
-      });
+      };
+      onProgress(wavePayload);
+      logProgress('hard-expansion', wavePayload);
     }
   }
 
@@ -1066,12 +1149,23 @@ export async function runBlockScreening({
   }
 
   // --- Run --------------------------------------------------------------------
+  // Tier counts are computed once, before the primer: a block's tier is
+  // fixed at state construction (settlePrimerStates can extend a failed
+  // confirm's primerTarget, never its tier), so the counts the primer
+  // phase-start note quotes are the same counts the return value and
+  // the report carry.
+  const tierCounts = { skip: 0, confirm: 0, full: 0 };
+  for (const state of rootStates) {
+    if (tierCounts[state.tier] !== undefined) tierCounts[state.tier] += 1;
+  }
+
   log('info', 'hard.engine.start', {
     blocks: blocks.length,
     budgetProbes: hard.budgetProbes,
     concurrency: workerConcurrency,
     screeningRounds,
     resumed: Boolean(initialBlockState),
+    blocksByTier: tierCounts,
   });
 
   await runPrimerPhase();
@@ -1125,11 +1219,6 @@ export async function runBlockScreening({
   // Wave C owns the store's file lifecycle; the engine merges in memory.
   if (reputation && completed) {
     mergeRunIntoReputation(reputation, blockResults, now, reputationThresholds);
-  }
-
-  const tierCounts = { skip: 0, confirm: 0, full: 0 };
-  for (const state of rootStates) {
-    if (tierCounts[state.tier] !== undefined) tierCounts[state.tier] += 1;
   }
 
   log('info', 'hard.engine.complete', {

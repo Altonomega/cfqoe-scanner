@@ -34,6 +34,7 @@ import {
   GENERATOR_VERSION,
 } from "./report.js";
 import { runLoadProbe } from "./probe/load.js";
+import { createProgressRecorder } from "./logging/logger.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
 import {
   compareEligibilitySummaries,
@@ -320,6 +321,11 @@ export async function runHardScan({
   layout,
   logger,
   onProgress = () => {},
+  // Called once, after the plan exists and before the first probe:
+  // the run-defining facts (engine, catalog size, probe budget) are
+  // known only here, and the caller deserves them on screen before
+  // the first progress line overwrites the banner.
+  onStart = () => {},
   runId,
   resume = !1,
   // Test seam with the scheduler/engine task shape: when null (every
@@ -328,6 +334,17 @@ export async function runHardScan({
 }) {
   const vless = parseVlessUri(vlessUri);
   assertWebsocketCapable(vless);
+  // Progress events are mirrored into the log as hard.progress records
+  // (debug per event, info throttled). UI events keep their raw phase
+  // strings; the caller names the checkpoint's phase vocabulary for
+  // the record, so log, checkpoint and UI agree about where the run is.
+  const recordProgress = createProgressRecorder(logger, {
+      event: "hard.progress",
+    }),
+    emitProgress = (event, logPhase = event.phase) => {
+      onProgress(event);
+      recordProgress({ ...event, phase: logPhase });
+    };
   const target = describeVless(vless),
     rangesText = fs.readFileSync(layout.rangesFile, "utf8"),
     ranges = parseRangeList(rangesText),
@@ -435,6 +452,10 @@ export async function runHardScan({
         fs.rmSync(file, { force: !0 });
       } catch {}
   }
+  // Calibration probes the path before the sweep starts (it runs inside
+  // the declaration chain below); announce it, or the run opens with a
+  // silent minute — the same fix as the Full path.
+  emitProgress({ phase: "calibrating", completed: 0, total: 1 }, "calibrating");
   // The probe binding for every stage below: the injected task when a
   // test supplies one, otherwise the real websocket probe. It reads
   // `settings` lazily because calibration replaces the settings object
@@ -481,6 +502,24 @@ export async function runHardScan({
     calibration: { ...settings.calibration, result: calibration },
   }),
     (state.settings = settings));
+  emitProgress(
+    {
+      phase: "calibrating",
+      completed: 1,
+      total: 1,
+      note: `concurrency ${calibration.selectedConcurrency} selected`,
+    },
+    "calibrating",
+  );
+  // Same calibration verdict as the Full path records (scan.calibration):
+  // the selected concurrency and why, with per-level results.
+  logger.info("hard.calibration", {
+    requestedConcurrency: calibration.requestedConcurrency,
+    selectedConcurrency: calibration.selectedConcurrency,
+    reason: calibration.reason,
+    controlIp: calibration.controlIp ?? null,
+    levels: calibration.levels,
+  });
   const concurrency = calibration.selectedConcurrency,
     screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5),
     blocksEngine = isBlocksState(state);
@@ -512,6 +551,11 @@ export async function runHardScan({
       skipAgeDays: settings.hard.reputationSkipAgeDays,
       confirmAgeDays: settings.hard.reputationConfirmAgeDays,
       maxStoredAttempts: settings.hard.reputationMaxStoredAttempts,
+    });
+    // The load outcome steers the next primer (tiers are applied inside
+    // the engine and ride its start record); until now it was invisible.
+    logger.info("hard.reputation.loaded", {
+      records: Object.keys(reputationStore.blocks).length,
     });
   }
   let canceled = !1;
@@ -558,6 +602,13 @@ export async function runHardScan({
     }),
     legacy = isLegacyState(state),
     nextCandidate = legacy ? nextLegacyCandidate : nextRoundRobinCandidate;
+  onStart({
+    engine: blocksEngine ? "blocks" : "legacy",
+    blocks: blocksEngine ? blockPlan.totalBlocks : null,
+    totalCandidates: plan.total,
+    ranges: ranges.length,
+    budgetProbes: blocksEngine ? settings.hard.budgetProbes : null,
+  });
   logger.info("hard.start", {
     runId: state.runId,
     target,
@@ -626,7 +677,8 @@ export async function runHardScan({
                 "hard-split-coverage" === event.phase
                   ? "hard-coverage"
                   : event.phase,
-            }));
+            }),
+            recordProgress({ ...event, phase: state.phase }));
         },
         logger,
         isCanceled: () => canceled,
@@ -677,17 +729,20 @@ export async function runHardScan({
           (successRate(observations) >= settings.scan.minimumSuccessRate
             ? (batchEligible += 1)
             : (batchFailed += 1),
-            onProgress({
-              phase: "hard-scan",
-              completed: state.counts.tested + finished,
-              total: state.total,
-              eligible: state.counts.eligible + batchEligible,
-              failed: state.counts.failed + batchFailed,
-              currentRange: candidate.range,
-              note: legacy
-                ? `legacy parallel resume x${concurrency}; Q or Ctrl+C to stop safely`
-                : `parallel x${concurrency}; range pass ${candidate.hostIndex + 1}; Q or Ctrl+C to stop safely`,
-            }));
+            emitProgress(
+              {
+                phase: "hard-scan",
+                completed: state.counts.tested + finished,
+                total: state.total,
+                eligible: state.counts.eligible + batchEligible,
+                failed: state.counts.failed + batchFailed,
+                currentRange: candidate.range,
+                note: legacy
+                  ? `legacy parallel resume x${concurrency}; Q or Ctrl+C to stop safely`
+                  : `parallel x${concurrency}; range pass ${candidate.hostIndex + 1}; Q or Ctrl+C to stop safely`,
+              },
+              "screening",
+            ));
         },
       });
       if (settings.hard.delayedRetry)
@@ -762,7 +817,7 @@ export async function runHardScan({
           state,
           settings,
           logger,
-          onProgress,
+          onProgress: (event) => emitProgress(event, "finalize"),
           task: probeTask,
         }),
     finalists = [
@@ -871,7 +926,12 @@ export async function runHardScan({
           .map((entry) => verifiedByIp.get(entry.ip) || entry)
           .sort(compareEligibilitySummaries)
       );
-    })({ candidates: finalists, settings, logger, onProgress }),
+    })({
+      candidates: finalists,
+      settings,
+      logger,
+      onProgress: (event) => emitProgress(event, "finalize"),
+    }),
     { xrayInfo, tunnelResults } = await (async function ({
       candidates,
       settings,
@@ -881,7 +941,14 @@ export async function runHardScan({
       onProgress,
     }) {
       const tunnelResults = new Map();
-      let xrayInfo = { enabled: !1, path: null, reason: "disabled" };
+      let xrayInfo = {
+        enabled: !1,
+        path: null,
+        // "disabled" only when the stage is off; an enabled stage with
+        // nothing to measure says so — the summaries print this reason,
+        // and conflating the two hid empty finalist pools.
+        reason: settings.tunnel.enabled ? "no-candidates" : "disabled",
+      };
       if (!settings.tunnel.enabled || 0 === candidates.length)
         return { xrayInfo, tunnelResults };
       const located = locateXray({
@@ -938,6 +1005,15 @@ export async function runHardScan({
               shutdownGraceMs: settings.tunnel.shutdownGraceMs,
               logger,
             });
+            // Sub-stage notes mirror the Full path's tunnel stage: a
+            // multi-minute finalist session must say which workload
+            // is running, not sit on the bare "final QoE ranking".
+            onProgress({
+              phase: "hard-finalize",
+              completed,
+              total,
+              note: `web transfer · ${candidate.ip}`,
+            });
             for (const workload of browsingWorkloads)
               browsingResults.push(
                 await probeBrowsing({
@@ -950,6 +1026,12 @@ export async function runHardScan({
                   logger,
                 }),
               );
+            onProgress({
+              phase: "hard-finalize",
+              completed,
+              total,
+              note: `streaming · ${candidate.ip}`,
+            });
             for (const workload of streamingWorkloads)
               streamingResults.push(
                 await probeStreaming({
@@ -966,6 +1048,12 @@ export async function runHardScan({
                 }),
               );
             if (settings.load?.enabled) {
+              onProgress({
+                phase: "hard-finalize",
+                completed,
+                total,
+                note: `real load · ${candidate.ip}`,
+              });
               const loadResult = await runLoadProbe({
                 proxy: xrayHandle.socks,
                 endpoints: settings.load.endpoints,
@@ -1026,7 +1114,7 @@ export async function runHardScan({
       layout,
       logger,
       vless,
-      onProgress,
+      onProgress: (event) => emitProgress(event, "finalize"),
     }),
     requirements = {
       browsing: settings.browsing.enabled,
@@ -1167,9 +1255,21 @@ export async function runHardScan({
     (state.lastReport = written.jsonPath),
     persistState(layout, state),
     canceled || removeStateFile(layout),
+    // The engine's stop reason and the reputation outcome ride the
+    // RETURN value, never report.totals (whose key set is pinned by
+    // the report contract): the end-of-run summaries and run.end need
+    // them, and until now the engine computed the reason and dropped
+    // it on the floor.
+    (written.stoppedReason =
+      engineOutcome?.stoppedReason ?? (canceled ? "canceled" : "completed")),
+    (written.reputationSaved = Boolean(engineOutcome?.completed)),
+    (written.reputationBlocks = reputationStore
+      ? Object.keys(reputationStore.blocks).length
+      : 0),
     logger.info("hard.complete", {
       runId: state.runId,
       canceled,
+      stoppedReason: written.stoppedReason,
       tested: state.counts.tested,
       eligible: state.counts.eligible,
       retryQueued: state.counts.retryQueued,
