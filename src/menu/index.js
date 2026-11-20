@@ -44,7 +44,9 @@ import { createLogger, summarizeLogFile } from "../logging/logger.js";
 import { emitRunStart, emitRunEnd } from "../logging/lifecycle.js";
 import { runScan } from "../scan.js";
 import { runHardScan, hasHardScanState } from "../hard-scan.js";
-const MENU_TEXT = `\n  ${color.bold("1")}. Quick Scan            ${color.dim("fast screening, low confidence labels")}\n  ${color.bold("2")}. Full Scan             ${color.dim("wider sample with independent verification")}\n  ${color.bold("3")}. Research Scan         ${color.dim("slow, deeper repeated-evidence profile")}\n  ${color.bold("4")}. Hard Deep Scan        ${color.dim("block-adaptive catalog sweep, resumable")}\n  ${color.bold("5")}. Resume Hard Scan      ${color.dim("continue the last deep sweep")}\n  ${color.bold("6")}. VLESS Configuration   ${color.dim("import, inspect or remove your config")}\n  ${color.bold("7")}. Workload Settings     ${color.dim("choose or add transfer and streaming targets")}\n  ${color.bold("8")}. System Check          ${color.dim("verify Node, Xray and file protection")}\n  ${color.bold("9")}. Best IPs              ${color.dim("show the latest ranking with confidence")}\n  ${color.bold("10")}. Previous Results     ${color.dim("list saved reports")}\n  ${color.bold("11")}. Diagnostics          ${color.dim("summarize the newest log file")}\n  ${color.bold("12")}. Scan Settings        ${color.dim("edit measurement and verification numbers")}\n  ${color.bold("0")}. Exit\n`;
+import { createWebServer, platformNoticeLines } from "../web/server.js";
+import { openInBrowser } from "../web/open.js";
+const MENU_TEXT = `\n  ${color.bold("1")}. Quick Scan            ${color.dim("fast screening, low confidence labels")}\n  ${color.bold("2")}. Full Scan             ${color.dim("wider sample with independent verification")}\n  ${color.bold("3")}. Research Scan         ${color.dim("slow, deeper repeated-evidence profile")}\n  ${color.bold("4")}. Hard Deep Scan        ${color.dim("block-adaptive catalog sweep, resumable")}\n  ${color.bold("5")}. Resume Hard Scan      ${color.dim("continue the last deep sweep")}\n  ${color.bold("6")}. VLESS Configuration   ${color.dim("import, inspect or remove your config")}\n  ${color.bold("7")}. Workload Settings     ${color.dim("choose or add transfer and streaming targets")}\n  ${color.bold("8")}. System Check          ${color.dim("verify Node, Xray and file protection")}\n  ${color.bold("9")}. Best IPs              ${color.dim("show the latest ranking with confidence")}\n  ${color.bold("10")}. Previous Results     ${color.dim("list saved reports")}\n  ${color.bold("11")}. Diagnostics          ${color.dim("summarize the newest log file")}\n  ${color.bold("12")}. Scan Settings        ${color.dim("edit measurement and verification numbers")}\n  ${color.bold("13")}. Web UI                ${color.dim("open the local web interface in your browser")}\n  ${color.bold("0")}. Exit\n`;
 async function pauseBeforeMenu(rl) {
   if (stdin.isTTY)
     await rl.question(
@@ -79,6 +81,10 @@ export async function runMenu() {
       await pauseBeforeMenu(rl);
     }
   } finally {
+    if (webSession) {
+      await webSession.api.stop("menu-exit");
+      webSession = null;
+    }
     rl.close();
   }
   console.log(`\n  ${color.dim("Goodbye.")}\n`);
@@ -127,9 +133,46 @@ async function dispatchChoice(choice, ctx) {
       return showDiagnostics(ctx);
     case "12":
       return editSettings(ctx);
+    case "13":
+      return startWebUi(ctx);
     default:
       return void console.log(`\n  ${color.yellow("Unknown option.")}`);
   }
+}
+// The web surface, hosted by the menu process (plan ch. 3.6): one
+// session per process — choosing the option again re-opens the same
+// session's link instead of starting a rival server (R-05). The
+// session ends from the browser's Server page, or when the menu
+// exits (runMenu's finally), so the server never outlives the
+// process that started it (R-16).
+let webSession = null;
+async function startWebUi({ layout }) {
+  if (webSession) {
+    console.log(`\n  ${color.green("Web UI is already running.")} ${webSession.url}`);
+    console.log(
+      `  ${color.dim("If your browser didn't open, paste this address — it contains your session key, keep it private:")}`,
+    );
+    console.log(`  ${webSession.bootstrapUrl}`);
+    await openInBrowser(webSession.bootstrapUrl);
+    return;
+  }
+  const api = createWebServer({
+    layout,
+    onStopRequest: () => {
+      webSession = null;
+    },
+  });
+  const started = await api.start({ openBrowser: true });
+  webSession = { api, ...started };
+  console.log(`\n  ${color.green("Web UI running.")} ${started.url}`);
+  console.log(
+    `  ${color.dim("If your browser didn't open, paste this address — it contains your session key, keep it private:")}`,
+  );
+  console.log(`  ${started.bootstrapUrl}`);
+  for (const line of platformNoticeLines()) console.log(`  ${color.dim(line)}`);
+  console.log(
+    `  ${color.dim("It keeps running while this menu is open; stop it from the browser's Server page, or by exiting the menu.")}`,
+  );
 }
 async function manageWorkloads({ rl, layout, settings }) {
   const catalog = loadCatalog(layout.workloadsFile);

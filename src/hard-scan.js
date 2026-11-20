@@ -342,6 +342,10 @@ export async function runHardScan({
   // checkpoint, same paused state, same stoppedReason. Absent (every
   // terminal caller), nothing about the run changes.
   signal = null,
+  // Optional observer for eligibility summaries as they are recorded
+  // (the web layer's genome tracker). Observer-only: it runs after
+  // the run's own bookkeeping and its return value is ignored.
+  onSummary = null,
   // Test seam with the scheduler/engine task shape: when null (every
   // production caller) probing binds to the real websocket probe below.
   task = null,
@@ -670,6 +674,7 @@ export async function runHardScan({
         initialBlockState,
         onSummary: (summary) => {
           (appendJsonLine(state.files.eligibilityFile, summary),
+            onSummary?.(summary),
             (state.counts.tested += 1),
             summary.eligibility.successRate >= settings.scan.minimumSuccessRate
               ? (state.counts.eligible += 1)
