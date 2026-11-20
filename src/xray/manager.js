@@ -40,6 +40,7 @@ function waitForPort(port, timeoutMs) {
 // Starts one short-lived Xray process bound to a private SOCKS inbound.
 export async function startXray({
   xrayPath,
+  xrayArgs = [],
   vless,
   candidateIp,
   startupTimeoutMs = 8000,
@@ -52,7 +53,14 @@ export async function startXray({
   const configPath = path.join(directory, `${randomUUID()}.json`);
   fs.writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
 
-  const child = spawn(xrayPath, ['run', '-c', configPath], {
+  // xrayArgs is an opt-in prefix (empty for every production caller, so a
+  // real xray binary sees exactly ['run', '-c', config] as before). It
+  // exists so tests can drive the fake-xray fixture through an interpreter
+  // (node itself): a script file cannot be spawned directly on Windows,
+  // where a shell-less spawn accepts only real executables — batch shims
+  // are rejected since the BatBadBut fix.
+  const extraArgs = Array.isArray(xrayArgs) ? xrayArgs : [];
+  const child = spawn(xrayPath, [...extraArgs, 'run', '-c', configPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
