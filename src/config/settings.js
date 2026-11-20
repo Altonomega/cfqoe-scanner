@@ -109,6 +109,37 @@ export function createDefaultSettings(platform = process.platform) {
       finalTop: 200,
       delayedRetry: true,
       retryLimit: isAndroid ? 1e3 : 5e3,
+      // Block-adaptive engine (DNA redesign): these keys are read only when
+      // engine is "blocks"; while it stays "round-robin" they are inert.
+      engine: "round-robin",
+      primerPerBlock: 3,
+      budgetProbes: isAndroid ? 4e4 : 72e3,
+      banditExploration: 1,
+      maxDepthPerBlock: 32,
+      // Expansion runs in waves of expansionWaveFactor × concurrency
+      // probes, at most expansionChunk per block per pass, and no single
+      // range may take more than rangeWaveCapFraction of a wave.
+      expansionWaveFactor: 10,
+      expansionChunk: 4,
+      rangeWaveCapFraction: 0.25,
+      poolPerBlock: 8,
+      recheckPerBlock: 4,
+      // A block splits only when a Fisher test clears splitAlpha AND the
+      // two halves differ by at least splitMinEffect, at most
+      // splitMaxDepth times.
+      splitMaxDepth: 2,
+      splitAlpha: 0.05,
+      splitMinEffect: 0.5,
+      // Reputation has no staleness cutoff: stored evidence decays with a
+      // reputationHalfLifeDays half-life and only steers the primer —
+      // blocks seen within reputationSkipAgeDays skip it, blocks up to
+      // reputationConfirmAgeDays old get one confirmation probe, older
+      // blocks get a full primer; the decayed prior is always retained.
+      // Per-block history is capped at reputationMaxStoredAttempts.
+      reputationSkipAgeDays: 3,
+      reputationConfirmAgeDays: 21,
+      reputationHalfLifeDays: 14,
+      reputationMaxStoredAttempts: 64,
     },
     customWorkloads: { browsing: [], streaming: [] },
     logging: { level: "info" },
