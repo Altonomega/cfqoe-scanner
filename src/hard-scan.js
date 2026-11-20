@@ -321,6 +321,11 @@ export async function runHardScan({
   layout,
   logger,
   onProgress = () => {},
+  // Called once, after the plan exists and before the first probe:
+  // the run-defining facts (engine, catalog size, probe budget) are
+  // known only here, and the caller deserves them on screen before
+  // the first progress line overwrites the banner.
+  onStart = () => {},
   runId,
   resume = !1,
   // Test seam with the scheduler/engine task shape: when null (every
@@ -597,6 +602,13 @@ export async function runHardScan({
     }),
     legacy = isLegacyState(state),
     nextCandidate = legacy ? nextLegacyCandidate : nextRoundRobinCandidate;
+  onStart({
+    engine: blocksEngine ? "blocks" : "legacy",
+    blocks: blocksEngine ? blockPlan.totalBlocks : null,
+    totalCandidates: plan.total,
+    ranges: ranges.length,
+    budgetProbes: blocksEngine ? settings.hard.budgetProbes : null,
+  });
   logger.info("hard.start", {
     runId: state.runId,
     target,

@@ -1,6 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { banner, color, table, writeProgress, clearProgress } from "./ui.js";
+import {
+  banner,
+  color,
+  table,
+  writeProgress,
+  clearProgress,
+  phaseLabel,
+  hardRunSummaryLines,
+} from "./ui.js";
 import {
   ensureDirectories,
   readSecretFile,
@@ -206,7 +214,11 @@ async function runScanCommand(parsed, { profile }) {
       layout,
       logger,
       runId: logger.runId,
-      onProgress: (progress) => writeProgress(progress.phase, progress),
+      onProgress: (progress) =>
+        writeProgress(phaseLabel(progress.phase), {
+          ...progress,
+          elapsedMs: Date.now() - startedAt,
+        }),
     });
     emitRunEnd(logger, {
       status: "completed",
@@ -271,7 +283,11 @@ async function runHardCommand(parsed, { resume }) {
       logger,
       runId: logger.runId,
       resume,
-      onProgress: (progress) => writeProgress(progress.phase, progress),
+      onProgress: (progress) =>
+        writeProgress(phaseLabel(progress.phase), {
+          ...progress,
+          elapsedMs: Date.now() - startedAt,
+        }),
     });
     emitRunEnd(logger, {
       status: result.canceled ? "canceled" : "completed",
@@ -288,6 +304,13 @@ async function runHardCommand(parsed, { resume }) {
           ? color.yellow("Hard scan paused safely.")
           : color.green("Hard scan completed."),
       ),
+      hardRunSummaryLines(result, {
+        elapsedMs: Date.now() - startedAt,
+      }).forEach((line) => console.log(line)),
+      result.xray &&
+        !result.xray.enabled &&
+        "xray_not_found" === result.xray.reason &&
+        console.log(color.dim(xrayInstallHint())),
       console.log(`Report:  ${result.jsonPath}`),
       console.log(`Ranking: ${result.topPath}\n`),
       printResults(result.report.results),

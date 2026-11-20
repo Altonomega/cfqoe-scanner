@@ -10,6 +10,8 @@ import {
   clearProgress,
   clearScreen,
   terminalWidth,
+  phaseLabel,
+  hardRunSummaryLines,
 } from "../ui.js";
 import {
   ensureDirectories,
@@ -573,7 +575,11 @@ async function runScanFlow({ layout }, mode) {
       layout,
       logger,
       runId: logger.runId,
-      onProgress: (event) => writeProgress(event.phase, event),
+      onProgress: (event) =>
+        writeProgress(phaseLabel(event.phase), {
+          ...event,
+          elapsedMs: Date.now() - startedAt,
+        }),
     });
     emitRunEnd(logger, {
       status: "completed",
@@ -633,7 +639,7 @@ async function runHardScanFlow({ rl, layout }, resume) {
     `\n  ${color.bold(resume ? "Resuming hard scan" : "Hard deep scan")} started. Run id: ${logger.runId}`,
   );
   console.log(
-    `  ${color.dim(`Parallel sweep: ${settings.hard.concurrency} IPs at once, ${settings.hard.screeningRounds} fast screening round(s).`)}`,
+    `  ${color.dim(`Parallel sweep: up to ${settings.hard.concurrency} IPs at once (auto-calibrated), ${settings.hard.screeningRounds} fast screening round(s).`)}`,
   );
   console.log(
     `  ${color.dim("Transient failures are retried later; finalists are verified adaptively. Press Q or Ctrl+C to stop safely.")}\n`,
@@ -648,7 +654,19 @@ async function runHardScanFlow({ rl, layout }, resume) {
       logger,
       runId: logger.runId,
       resume,
-      onProgress: (event) => writeProgress(event.phase, event),
+      onStart: ({ engine, blocks, totalCandidates, ranges, budgetProbes }) =>
+        console.log(
+          `  ${color.dim(
+            "blocks" === engine
+              ? `Catalog: ${blocks} blocks · ${totalCandidates} IPs · ${ranges} ranges · probe budget ${budgetProbes}`
+              : `Catalog: ${totalCandidates} IPs · ${ranges} ranges (legacy round-robin)`,
+          )}`,
+        ),
+      onProgress: (event) =>
+        writeProgress(phaseLabel(event.phase), {
+          ...event,
+          elapsedMs: Date.now() - startedAt,
+        }),
     });
     emitRunEnd(logger, {
       status: result.canceled ? "canceled" : "completed",
@@ -664,10 +682,14 @@ async function runHardScanFlow({ rl, layout }, resume) {
         ? `  ${color.yellow("Hard scan paused safely.")}`
         : `  ${color.green("Hard scan completed.")}`,
     );
-    console.log(`  Eligible IPs so far: ${result.eligibleCount}`);
-    console.log(
-      `  QoE evidence: ${result.report.totals.complete || 0} complete, ${result.report.totals.partial || 0} partial`,
-    );
+    for (const line of hardRunSummaryLines(result, {
+      elapsedMs: Date.now() - startedAt,
+    }))
+      console.log(`  ${line}`);
+    result.xray &&
+      !result.xray.enabled &&
+      "xray_not_found" === result.xray.reason &&
+      console.log(`  ${color.dim(xrayInstallHint())}`);
     console.log(`  Report: ${result.jsonPath}`);
     printRankings(result.report.results);
   } catch (error) {
