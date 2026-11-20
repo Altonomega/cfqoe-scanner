@@ -72,7 +72,7 @@ en: {
   "nav.settings": "Settings", "nav.config": "Config", "nav.diagnostics": "Diagnostics",
   "dash.status": "Status", "dash.runScan": "Run a scan", "dash.plateRest": "The plate, at rest",
   "dash.latest": "Latest result", "dash.noRuns": "No runs yet. The plate is blank.",
-  "dash.fromRuns": "From your recorded runs: {alive} blocks known alive · {absent} known absent · {known} known in all.",
+  "dash.fromRuns": "From your recorded runs: {alive} blocks known alive · {absent} known absent · {known} known in total.",
   "dash.resumeLine": "Resume the paused Hard run — {phase}, {probes} probes spent.",
   "status.config": "config", "status.xray": "xray", "status.verify": "verify", "status.resume": "resume", "status.platform": "platform",
   "status.ready": "ready", "status.missing": "missing", "status.found": "found", "status.notFound": "not found",
@@ -91,7 +91,7 @@ en: {
   "phase.hard-primer": "Primers — origins of replication", "phase.hard-coverage": "Proofreading — checking uneven blocks",
   "phase.hard-expansion": "Replication forks — expanding the living blocks", "phase.hard-retry": "Delayed retries",
   "phase.hard-verify": "Verifying finalists (SPRT)", "phase.hard-finalize": "Final QoE — the sequencing lane",
-  "genome.title": "Hard Deep Scan", "genome.sub": "The whole Cloudflare catalog as one plate: {ranges} ranges · {blocks} blocks · {addrs} addresses. One cell = one /24 block.",
+  "genome.title": "Hard Deep Scan", "genome.sub": "The whole Cloudflare catalog as one plate: {ranges} ranges · {blocks} blocks · {addrs} addresses. One cell = one \u2068/24\u2069 block.",
   "genome.ideo": "Ideogram — {ranges} ranges (width ∝ blocks)", "genome.plate": "The plate — {blocks} blocks",
   "genome.trace": "Trace — last probes (height = speed)", "genome.liveTop": "Live top", "genome.liveNotes": "Live notes",
   "genome.budget": "Budget", "genome.spent": "{spent} / {total} probes",
@@ -186,7 +186,7 @@ fa: {
   "phase.hard-primer": "پرایمرها — نقاط آغاز همانندسازی", "phase.hard-coverage": "بازخوانی — بررسی بلاک‌های ناهموار",
   "phase.hard-expansion": "چنگال‌های همانندسازی — گسترش بلاک‌های زنده", "phase.hard-retry": "تلاش‌های مجدد با تأخیر",
   "phase.hard-verify": "راستی‌آزمایی فینالیست‌ها (SPRT)", "phase.hard-finalize": "سنجش نهایی کیفیت — خط سکوئنسینگ",
-  "genome.title": "اسکن عمیق (Hard Deep Scan)", "genome.sub": "کل کاتالوگ کلودفلر به‌صورت یک پلیت: {ranges} رینج · {blocks} بلاک · {addrs} آدرس. هر خانه = یک بلاک /24.",
+  "genome.title": "اسکن عمیق (Hard Deep Scan)", "genome.sub": "کل کاتالوگ کلودفلر به‌صورت یک پلیت: {ranges} رینج · {blocks} بلاک · {addrs} آدرس. هر خانه = یک بلاک \u2068/24\u2069.",
   "genome.ideo": "ایدیوگرام — {ranges} رینج (عرض متناسب با تعداد بلاک)", "genome.plate": "پلیت — {blocks} بلاک",
   "genome.trace": "ردّ پروب‌ها — آخرین پروب‌ها (ارتفاع = سرعت)", "genome.liveTop": "برترهای زنده", "genome.liveNotes": "یادداشت‌های زنده",
   "genome.budget": "بودجه", "genome.spent": "{spent} / {total} پروب",
@@ -200,7 +200,7 @@ fa: {
   "insp.candidates": "کاندیداها", "insp.openResults": "باز کردن در نتایج", "insp.range": "رینج {range} · لاین {lane}",
   "insp.probes": "{ok} موفق از {n} پروب · نرخ {rate} · کران پایین ۹۵٪ {lower}", "insp.splitNo": "شکافت: نه (p {p})",
   "insp.splitYes": "شکافت: بله — فرزندان در ربع‌ها زندگی می‌کنند", "insp.tier": "رده: {tier}",
-  "insp.repLine": "{n} پروب در {runs} اجرا · نرخ فرسوده {rate} · آخرین مشاهده {date} · بهترین {ip} ({colo})",
+  "insp.repLine": "{n} پروب در {runs} اجرا · نرخ افت‌یافته {rate} · آخرین مشاهده {date} · بهترین {ip} ({colo})",
   "insp.unknown": "در اجرای قبلی پروب نشده است.", "insp.noCand": "هنوز کاندیدی از این بلاک نیست.",
   "res.title": "نتایج", "res.fromRun": "اجرای {run} · {mode} · پایان‌یافته در {when}",
   "res.filterBlock": "فقط بلاک {block} نمایش داده می‌شود", "res.clearFilter": "حذف فیلتر",
@@ -243,9 +243,18 @@ fa: {
   "tick.started": "اجرای {run} شروع شد ({mode}).",
 }};
 let lang = prefs.lang === "fa" ? "fa" : "en";
+/* Substitutions are data (IPs, CIDRs, run IDs, counts, rates). Every
+   value is wrapped in Unicode bidi isolates (FSI…PDI) at substitution
+   time, so Persian prose can never reorder it — the same isolation the
+   .d/<bdi> spans give standalone fields, in the one form that survives
+   every render context this app uses: textContent, esc()'d HTML and
+   plain notices alike, where a literal tag would show or be escaped.
+   FSI picks the embedded direction from the value's first strong
+   character, so a Persian label parameter isolates as RTL and an IP or
+   number as LTR. */
 function t(key, params) {
   let s = (STR[lang] && STR[lang][key]) || STR.en[key] || key;
-  if (params) for (const [k, v] of Object.entries(params)) s = s.replaceAll("{" + k + "}", v);
+  if (params) for (const [k, v] of Object.entries(params)) s = s.replaceAll("{" + k + "}", "\u2068" + v + "\u2069");
   return s;
 }
 function applyLang() {
@@ -316,7 +325,7 @@ const Live = {
    It exists so the UI can be previewed and Proof-tested before W3.
    It measures nothing; the SIMULATED FEED bar says so, always. */
 const Sim = {
-  kind: "sim", seq: 0, timer: null, tail: false, speed: 16,
+  kind: "sim", seq: 0, runCounter: 0, timer: null, tail: false, speed: 16,
   cat: null, latent: null, half: null, known: null, bestHost: null, colo: null,
   state: null, heat: null, quads: null, quadHeat: null,
   run: null, paused: null, reports: [], latestReport: null, cfgDesc: null,
@@ -455,12 +464,17 @@ const Sim = {
   disconnect() { },
   setTail(on) { this.tail = on; if (on) this.log("info", "web.tail", "live tail subscribed (simulated)"); },
   newRun(mode) {
-    const runId = Math.random().toString(16).slice(2, 10) + "-sim";
+    const runId = "sim-" + String(++this.runCounter).padStart(4, "0");
     const R = { mode, runId, startedAt: new Date().toISOString(), phase: "calibrating", tick: 0,
       counters: { completed: 0, total: 0, eligible: 0, failed: 0, probesSpent: 0, primerProbes: 0, expansionProbes: 0, reserveProbes: 0, blocksPrimed: 0, blocksExpanded: 0, blocksSplit: 0, elapsedMs: 0 },
-      rng: mulberry32(404 + Date.now() % 100000) };
+      // Fixed seed (the settings default, 404): the sim is the contract's
+      // reference implementation, so every run replays identically — the
+      // reproducible smoke in scripts/web-sim-smoke.mjs depends on it.
+      rng: mulberry32(404) };
     if (mode === "hard") {
+      R.hard = { ...((this.settingsObj || simDefaultSettings()).hard) };
       R.att = new Uint16Array(7697); R.suc = new Uint16Array(7697);
+      R.expProbes = new Uint16Array(7697); R.lowWaves = 0; R.expStop = null;
       R.hAtt = [new Uint16Array(7697), new Uint16Array(7697)]; R.hSuc = [new Uint16Array(7697), new Uint16Array(7697)];
       R.pending = []; R.po = this.primerOrder(); R.poIdx = 0; R.suspects = []; R.covIdx = 0; R.wave = 0; R.finIdx = 0; R.laneIdx = 0;
       for (let i = 0; i < 7697; i++) { this.state[i] = this.known[i] ? 1 : 0; this.heat[i] = 0; this.quads[i] = 0; this.quadHeat[i] = 0; }
@@ -511,10 +525,13 @@ const Sim = {
     this.log("info", "run.complete", R.runId);
     this.stopRun();
   },
-  probeOnce(R, i, half) {
+  probeOnce(R, i, half, counted = true) {
     const ok = R.rng() < this.pHalf(i, half);
     R.att[i]++; R.hAtt[half][i]++; if (ok) { R.suc[i]++; R.hSuc[half][i]++; }
-    R.counters.probesSpent++;
+    // `counted` tracks the screening budget (primer + reserve +
+    // expansion), the only thing budgetProbes caps in the real engine;
+    // finalize retries pass false — they are bounded by retryLimit.
+    if (counted) R.counters.probesSpent++;
     return ok;
   },
   tracePush(R, ok, ms, recovered) { this.emit("trace", { points: [[recovered ? "recovered" : ok ? "ok" : R.rng() < 0.003 ? "error" : "timeout", Math.round(ms)]] }); },
@@ -562,6 +579,105 @@ Object.assign(Sim, {
     R.counters.completed = R.resolved; R.counters.total = R.po.length;
     R.counters.eligible = 0; for (let i = 0; i < 7697; i++) if (R.suc[i] > 0) R.counters.eligible++;
   },
+  expansionWave(R) {
+    // One expansion wave, mirroring the real engine (hard-engine.js
+    // runExpansionPhase + bandit.js rankBlocks / allocateWave /
+    // evaluateMarginalGain): a wave is expansionWaveFactor × concurrency
+    // probes (10 × 12 = 120), granted in passes of expansionChunk (4) in
+    // Wilson-UCB order (index desc, fewer attempts, lower index), no
+    // range taking more than rangeWaveCapFraction (25%) of a wave, and
+    // a block's run depth capped at maxDepthPerBlock (32) probes. The
+    // phase ends on the total budget, on exhaustion, or when the best
+    // expandable block's index stays under the pool threshold τ for two
+    // consecutive waves (marginal gain). Parked blocks (≥6 probes,
+    // index < 0.3) are served only from a τ=0 wave's leftovers, exactly
+    // as allocateWave does.
+    const H = R.hard, budget = H.budgetProbes;
+    if (R.counters.probesSpent >= budget) { this.expansionStop(R, "budget"); return 0; }
+    // τ (spec §4.4): the Wilson lower bound of the pool's rank-#finalTop
+    // candidate. The engine's pool holds per-ADDRESS candidates, and a
+    // drawn address is probed exactly once during screening — so a
+    // successful candidate's summary is 1/1, and once at least finalTop
+    // successes exist (the pool is full) τ sits at that lower bound,
+    // ≈ 0.2065. It is NOT the block-aggregate lower: blocks deepen, but
+    // candidates do not, which is why the real phase is budget-driven
+    // on any path with a few hundred live addresses.
+    let successes = 0;
+    for (let i = 0; i < 7697; i++) successes += R.suc[i];
+    const tau = successes >= H.finalTop ? wilson(1, 1).lower : 0;
+    const ranked = [];
+    for (let i = 0; i < 7697; i++) {
+      if (this.state[i] === 7) continue; // split parent: retired — its evidence lives in the children
+      ranked.push({ i, ucb: wilson(R.suc[i], R.att[i]).upper, att: R.att[i], range: this.cat.blocks[i].range });
+    }
+    ranked.sort((a, b) => (b.ucb - a.ucb) || (a.att - b.att) || (a.i - b.i));
+    const depthLeft = (s) => H.maxDepthPerBlock - s.att;
+    const best = ranked.find((s) => depthLeft(s) > 0);
+    if (!best) { this.expansionStop(R, "exhausted"); return 0; }
+    if (best.ucb < tau) {
+      R.lowWaves = (R.lowWaves || 0) + 1;
+      if (R.lowWaves >= 2) this.expansionStop(R, "marginal-gain");
+      return 0;
+    }
+    R.lowWaves = 0;
+    const eligible = [], parked = [];
+    for (const s of ranked) {
+      if (depthLeft(s) <= 0) continue;
+      if (tau === 0 && s.att >= 6 && s.ucb < 0.3) parked.push(s);
+      else if (s.ucb >= tau) eligible.push(s);
+    }
+    const waveSize = Math.min(H.expansionWaveFactor * H.concurrency, budget - R.counters.probesSpent);
+    const rangeCapApplies = new Set(eligible.map((s) => s.range)).size >= 4;
+    const rangeCap = Math.ceil(H.rangeWaveCapFraction * waveSize);
+    const grants = new Map(), rangeSpent = new Map();
+    let waveLeft = waveSize;
+    const grantPasses = (list) => {
+      let progressed = true;
+      while (waveLeft > 0 && progressed) {
+        progressed = false;
+        for (const s of list) {
+          if (waveLeft <= 0) break;
+          const already = grants.get(s.i) || 0;
+          let grant = Math.min(H.expansionChunk, depthLeft(s) - already, waveLeft);
+          if (rangeCapApplies) grant = Math.min(grant, rangeCap - (rangeSpent.get(s.range) || 0));
+          if (grant <= 0) continue;
+          grants.set(s.i, already + grant);
+          rangeSpent.set(s.range, (rangeSpent.get(s.range) || 0) + grant);
+          waveLeft -= grant; progressed = true;
+        }
+      }
+    };
+    grantPasses(eligible);
+    if (waveLeft > 0) grantPasses(parked);
+    if (!grants.size) { this.expansionStop(R, "exhausted"); return 0; }
+    R.wave++;
+    let waveProbes = 0; const points = [];
+    for (const s of ranked) {
+      const grant = grants.get(s.i); if (!grant) continue;
+      const i = s.i;
+      this.state[i] = 5; this.mark(R, i);
+      if (!R.expProbes[i]) R.counters.blocksExpanded++; // the report's definition: expansionProbes > 0
+      R.expProbes[i] += grant;
+      for (let k = 0; k < grant; k++) {
+        const ok = this.probeOnce(R, i, R.rng() < 0.5 ? 0 : 1);
+        R.counters.expansionProbes++; waveProbes++;
+        points.push([ok ? "ok" : R.rng() < 0.003 ? "error" : "timeout", Math.round(ok ? 50 + R.rng() * 800 : 6000)]);
+      }
+      this.state[i] = R.att[i] >= H.maxDepthPerBlock ? 8 : 3;
+      this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]);
+      this.mark(R, i);
+    }
+    if (points.length) this.emit("trace", { points });
+    this.emit("ticker", { text: t("tick.wave", { wave: R.wave, probes: waveProbes, spent: fmt(R.counters.probesSpent), total: fmt(budget) }) });
+    this.log("info", "hard.engine.wave", "wave " + R.wave);
+    if (R.counters.probesSpent >= budget) this.expansionStop(R, "budget");
+    return waveProbes;
+  },
+  expansionStop(R, reason) {
+    R.expStop = reason;
+    this.log("info", "hard.engine.expansion.stop", reason);
+    this.setPhase(R, "hard-retry");
+  },
   tickHard(R) {
     const K = 90 * this.speed;
     if (R.phase === "calibrating") { this.emit("ticker", { text: t("tick.calibrated", { n: 12 }) }); this.setPhase(R, "hard-primer"); R.resolved = 0; return; }
@@ -605,33 +721,25 @@ Object.assign(Sim, {
       R.covIdx += batch.length;
       if (R.covIdx >= R.suspects.length) {
         this.emit("ticker", { text: t("tick.coverage", { suspects: fmt(R.suspects.length), split: fmt(R.counters.blocksSplit) }) });
-        R.aliveList = []; for (let i = 0; i < 7697; i++) if (R.suc[i] > 0) R.aliveList.push(i);
         this.setPhase(R, "hard-expansion");
       }
       this.flush(R); return;
     }
     if (R.phase === "hard-expansion") {
-      const waves = this.speed >= 16 ? 2 : 1;
-      for (let w = 0; w < waves; w++) {
-        R.wave++;
-        const cand = R.aliveList.filter((i) => R.att[i] < 32);
-        cand.sort((a, b) => (R.suc[b] / R.att[b] + Math.sqrt(2 * Math.log(R.counters.probesSpent + 2) / R.att[b])) - (R.suc[a] / R.att[a] + Math.sqrt(2 * Math.log(R.counters.probesSpent + 2) / R.att[a])));
-        for (const i of cand.slice(0, 30)) {
-          this.state[i] = 5; this.mark(R, i);
-          for (let k = 0; k < 4; k++) { const ok = this.probeOnce(R, i, R.rng() < 0.5 ? 0 : 1); R.counters.expansionProbes++; this.tracePush(R, ok, ok ? 50 + R.rng() * 800 : 6000, false); }
-          this.state[i] = R.att[i] >= 32 ? 8 : 3; this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]); this.mark(R, i);
-          if (R.att[i] >= 32) R.counters.blocksExpanded++;
-        }
-        if (R.wave % 2 === 1 || this.speed < 16) this.emit("ticker", { text: t("tick.wave", { wave: R.wave, probes: 120, spent: fmt(R.counters.probesSpent), total: fmt(72000) }) });
-        this.log("info", "hard.engine.wave", "wave " + R.wave);
+      // Whole waves until the tick's probe quota is spent — a wave is
+      // the unit of work in the real engine too (see expansionWave).
+      let quota = 90 * this.speed;
+      while (quota > 0 && R.phase === "hard-expansion") {
+        const spent = this.expansionWave(R);
+        if (spent <= 0) break;
+        quota -= spent;
       }
-      if (R.counters.probesSpent >= 72000 || R.wave >= 30) this.setPhase(R, "hard-retry");
       this.flush(R); return;
     }
     if (R.phase === "hard-retry") {
       if (!R.retried) {
         R.retried = true; let recovered = 0, tried = 0;
-        for (let i = 0; i < 7697 && tried < 240; i++) if (this.state[i] === 4) { tried++; const ok = this.probeOnce(R, i, R.rng() < 0.5 ? 0 : 1); this.tracePush(R, ok, ok ? 120 + R.rng() * 600 : 6000, ok); if (ok) { recovered++; this.state[i] = 3; this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]); this.mark(R, i); } }
+        for (let i = 0; i < 7697 && tried < 240; i++) if (this.state[i] === 4) { tried++; const ok = this.probeOnce(R, i, R.rng() < 0.5 ? 0 : 1, false); this.tracePush(R, ok, ok ? 120 + R.rng() * 600 : 6000, ok); if (ok) { recovered++; this.state[i] = 3; this.heat[i] = Math.round(255 * R.suc[i] / R.att[i]); this.mark(R, i); } }
         R.recovered = recovered;
       } else {
         this.emit("ticker", { text: t("tick.retries", { n: fmt(R.recovered || 0) }) });
@@ -799,11 +907,35 @@ const app = {
     this.refreshChrome();
     if (this.view && this.view.onEvent) this.view.onEvent(type, d);
   },
-  refreshNotes() {
+  refreshNotes(force) {
     const el = $("#margin-notes"); if (!el) return;
-    el.innerHTML = this.ticker.length ? this.ticker.slice(0, 3).map((x) => `<div>${esc(x)}</div>`).join("") : esc(t("run.idle"));
+    const top = this.ticker.slice(0, 3);
+    const sig = lang + "|" + top.join("");
+    if (sig === this._notesSig) return; // rebuild only when the visible notes actually change
+    const now = performance.now();
+    if (!force && this._notesAt && now - this._notesAt < 500) { // …and never faster than 2/s
+      if (!this._notesTimer) this._notesTimer = setTimeout(() => { this._notesTimer = null; this._notesSig = null; this.refreshNotes(true); }, 510);
+      return;
+    }
+    this._notesSig = sig; this._notesAt = now;
+    el.innerHTML = top.length ? top.map((x) => `<div>${esc(x)}</div>`).join("") : esc(t("run.idle"));
   },
-  refreshChrome() {
+  refreshChrome(force) {
+    // Chrome is a summary, not a counter: events arrive per probe, so
+    // this renders only when something it shows actually changed, at
+    // most twice a second — a trailing render always lands the final
+    // state, so nothing visible is ever lost to the throttle.
+    const c = this.counters;
+    const sig = [lang, this.runStatus, this.runMode, this.runId, this.phase,
+      Math.floor((c.elapsedMs || 0) / 1000), c.probesSpent || c.completed || 0,
+      ((this.state || {}).latest || {}).runId || ""].join("|");
+    if (sig === this._chromeSig) return;
+    const now = performance.now();
+    if (!force && this._chromeAt && now - this._chromeAt < 500) {
+      if (!this._chromeTimer) this._chromeTimer = setTimeout(() => { this._chromeTimer = null; this._chromeSig = null; this.refreshChrome(true); }, 510);
+      return;
+    }
+    this._chromeSig = sig; this._chromeAt = now;
     const b = $("#run-banner");
     if (this.runStatus === "running") {
       b.hidden = false;
@@ -1110,7 +1242,7 @@ Views.genome = (el) => {
         <div class="budget-meter"><div id="g-budget-fill"></div></div>
         <div class="readout" id="g-budget-text"></div>
         <h3 class="sec-head">${esc(t("genome.legend"))}</h3>
-        <div class="legend" style="flex-direction:column;gap:5px">${[["", "unprobed"], ["background:var(--a);opacity:.25", "known"], ["sw-g", "priming"], ["sw-a", "alive"], ["", "absent"], ["sw-a\" style=\"border-top:2px solid var(--g)", "hot"], ["\" style=\"border-bottom:2px solid var(--g)", "suspect"], ["sw-ink", "exhausted"], ["sw-c", "finalist"], ["sw-c", "winner"]].map(([cls, k]) => `<span><i class="sw ${cls}"></i>${esc(t("lg." + k))}</span>`).join("")}
+        <div class="legend" style="flex-direction:column;gap:5px">${[["", "unprobed"], ["background:var(--a);opacity:.25", "known"], ["sw-g", "priming"], ["sw-a", "alive"], ["", "absent"], ["sw-a\" style=\"border-top:2px solid var(--g)", "hot"], ["\" style=\"border-bottom:2px solid var(--g)", "suspect"], ["\" style=\"border-left:3px double var(--ink-40);background:var(--plate2)", "split"], ["sw-ink", "exhausted"], ["sw-c", "finalist"], ["sw-c", "winner"]].map(([cls, k]) => `<span><i class="sw ${cls}"></i>${esc(t("lg." + k))}</span>`).join("")}
         </div>
         <h3 class="sec-head">${esc(t("genome.liveNotes"))}</h3>
         <div class="ticker" id="g-ticker"></div>
@@ -1195,10 +1327,9 @@ Views.genome = (el) => {
     onSnapshot(s) { plate.drawStatic(); plate.allDirty(); drawIdeo(); controlsTo(); topTo((s.run || {}).top); },
     onEvent(type, d) {
       if (type === "phase") { railTo(d.phase); }
-      if (type === "counters") { const now = performance.now(); if (now - lastCounters > 500) { lastCounters = now; countersTo(); } }
+      if (type === "counters" || type === "ticker") { const now = performance.now(); if (now - lastCounters > 500) { lastCounters = now; countersTo(); } }
       if (type === "candidate" && d.lane) laneTo();
       if (type === "run-state") { controlsTo(); if (d.status === "complete") drawIdeo(); }
-      if (type === "ticker") countersTo();
     },
   };
 };

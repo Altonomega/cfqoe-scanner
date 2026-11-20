@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // Guards for the web UI assets (src/web/public/): the §1.6 anti-pattern
@@ -45,6 +46,25 @@ test('the VLESS secret is never rendered: config view binds only descriptor fiel
   const js = read('app.js');
   assert.ok(js.includes('cfg.f.idPresent'), 'descriptor rendering present');
   assert.ok(!/innerHTML[^;]*descriptor\.uri/.test(js) && !js.includes('d.uri'), 'no descriptor.uri rendering');
+});
+
+test('sim smoke: the fixed-seed Hard run spends its budget and expands blocks', { timeout: 180000 }, () => {
+  // The reproducible smoke (scripts/web-sim-smoke.mjs) is the only
+  // source of quotable sim numbers: fixed seeds (catalog 20261, run
+  // 404), scripted end-to-end. Two runs must print identical counters,
+  // and the expansion must be able to spend the full 72,000 budget —
+  // the structural caps that once held it to 27,731 are gone.
+  const script = fileURLToPath(new URL('../scripts/web-sim-smoke.mjs', import.meta.url));
+  const run = () => JSON.parse(execFileSync(process.execPath, [script], { encoding: 'utf8' }));
+  const a = run(), b = run();
+  assert.deepEqual(b, a, 'the fixed-seed smoke is deterministic');
+  assert.equal(a.primerProbes, 23091, 'primer spends 3 per block');
+  assert.equal(a.blocksPrimed, 7697, 'every block primed');
+  assert.equal(a.expansionStop, 'budget', 'expansion ends on the budget, not a structural cap');
+  assert.equal(a.probesSpent, 72000, 'the full budget is spent');
+  assert.ok(a.expansionWaves > 300, 'hundreds of real 120-probe waves: ' + a.expansionWaves);
+  assert.ok(a.blocksExpanded > 0, 'blocks actually expand (depth cap 32 is reachable)');
+  assert.ok(a.blocksSplit > 0, 'split-coverage still splits blocks');
 });
 
 test('size ratchet: the three assets stay a localhost-instant payload', () => {
