@@ -8,15 +8,16 @@ export function createDefaultSettings(platform = process.platform) {
     concurrency = isAndroid ? 6 : 12;
   return {
     version: 7,
-    mode: "full",
     scan: {
       perRange: 3,
       maxCandidates: 120,
       rounds: 3,
-      screeningRounds: 1,
       concurrency,
       timeoutMs: 6e3,
       minimumSuccessRate: 0.6,
+      // The seed governs only the block-adaptive Hard engine's sampling.
+      // runScan ignores it: Full/Quick/Research draw a fresh random seed
+      // per run and record the used seed in the report instead.
       seed: 404,
       delayedRetry: { enabled: true, maxCandidates: isAndroid ? 30 : 60 },
     },
@@ -36,7 +37,13 @@ export function createDefaultSettings(platform = process.platform) {
       enabled: true,
       levels: isAndroid ? [1, 2, 4, 6] : [1, 2, 4, 8, 12, 16],
       latencyInflationLimit: 0.1,
-      failureRateIncreaseLimit: 0.02,
+      // At level L the control is probed L times, so one failure moves
+      // the failure rate by 1/L — at least 6.25% at every level. A 0.02
+      // limit was finer than that granularity: a single dropped control
+      // handshake vetoed every level and pinned the scan to concurrency
+      // 1. At 0.10 one failure at the top levels (8.3% at 12) no longer
+      // vetoes; two (16.7%) still do.
+      failureRateIncreaseLimit: 0.1,
       eventLoopLagLimitMs: isAndroid ? 80 : 50,
     },
     tunnel: {
@@ -44,13 +51,11 @@ export function createDefaultSettings(platform = process.platform) {
       xrayPath: "auto",
       limit: 5,
       rounds: 1,
-      concurrency: 1,
       startupTimeoutMs: 8e3,
       shutdownGraceMs: 1500,
     },
     browsing: {
       enabled: true,
-      metricName: "Web Transfer Score",
       workloads: isAndroid
         ? ["cloudflare-docs"]
         : ["cloudflare-docs", "cdnjs"],
@@ -85,8 +90,13 @@ export function createDefaultSettings(platform = process.platform) {
       fanoutRequests: isAndroid ? 3 : 4,
       idleSamples: 2,
       timeoutMs: isAndroid ? 5e3 : 7e3,
-      minBytes: isAndroid ? 4 * MIB : 8 * MIB,
-      gateProfile: "balanced",
+      // "balanced" warns below 8 Mbps and fails below 2 Mbps sustained —
+      // above the whole path class this scanner is used on (~3–6 Mbps
+      // through the tunnel), where every decent candidate capped at 75
+      // and "recommended" was unreachable. "tolerant" (warn 4 / fail 1)
+      // restores label headroom where the candidates actually live; its
+      // fail lines still catch genuinely dead candidates.
+      gateProfile: "tolerant",
       endpoints: {
         download: "https://speed.cloudflare.com/__down",
         upload: "https://speed.cloudflare.com/__up",
@@ -95,10 +105,6 @@ export function createDefaultSettings(platform = process.platform) {
       },
       control: { enabled: false, bytes: 6 * MIB },
       gates: {},
-    },
-    traffic: {
-      targetBytesPerCandidate: isAndroid ? 20 * MIB : 30 * MIB,
-      hardWarningBytesPerCandidate: 40 * MIB,
     },
     hard: {
       concurrency,
@@ -172,17 +178,60 @@ export function mergeSettings(base, overrides) {
 }
 // Pre-v7 default values for individual keys: a stored value that still equals
 // the old default is upgraded to the current default; user changes are kept.
+// Inherent limitation of the mechanism, stated once here: it cannot
+// distinguish "never touched" from "deliberately set to the old default" —
+// a user who intentionally chose the old value is upgraded along with
+// everyone else. That collision is accepted because the alternative
+// (version-gating every default change) strands existing installs on
+// values the team has already judged wrong.
 const OLD_SCALAR_DEFAULTS = [
     ["streaming", "maxSegments", 10],
     ["streaming", "quickSegments", 3],
+    // The v2-era Research default: files that old were never migrated
+    // past it, so their Research scans still run 29 segments per
+    // candidate against a current default of 6.
+    ["streaming", "researchSegments", 29],
     ["streaming", "timeoutMs", 25e3],
     ["browsing", "assetLimit", 6],
     ["browsing", "timeoutMs", 15e3],
+  ],
+  // Defaults whose value changed in 0.9.0. SETTINGS_VERSION stays 7 (no
+  // key changed shape), so the equals-old-default rule is the only way
+  // the new values reach existing installs — and it must run for
+  // current-version files too, which the pre-v7 path never touches.
+  CHANGED_SCALAR_DEFAULTS = [
+    ["calibration", "failureRateIncreaseLimit", 0.02],
+    ["load", "gateProfile", "balanced"],
+  ],
+  // Keys removed in 0.9.0 after the settings audits found no reader
+  // anywhere (dead config the settings UI happily edited). mergeSettings
+  // copies unknown stored keys verbatim, so without an explicit strip an
+  // old file would resurrect them on every load and the next save would
+  // write them back out.
+  REMOVED_SETTINGS_KEYS = [
+    ["mode"],
+    ["traffic"],
+    ["scan", "screeningRounds"],
+    ["tunnel", "concurrency"],
+    ["browsing", "metricName"],
+    ["load", "minBytes"],
   ],
   OLD_WORKLOAD_DEFAULTS = [
     ["browsing", ["wikipedia"]],
     ["streaming", ["apple-bipbop"]],
   ];
+// The current-version pass, applied on every migrateSettings return
+// path: upgrade stored values that still equal a changed 0.9.0 default,
+// and strip keys that no longer exist so removed config cannot persist.
+function applyCurrentDefaults(merged, input, defaults) {
+  for (const [section, key, oldValue] of CHANGED_SCALAR_DEFAULTS)
+    if (input[section]?.[key] === oldValue)
+      merged[section][key] = defaults[section][key];
+  for (const path of REMOVED_SETTINGS_KEYS)
+    if (1 === path.length) delete merged[path[0]];
+    else delete merged[path[0]][path[1]];
+  return merged;
+}
 function arraysEqual(a, b) {
   return (
     Array.isArray(a) &&
@@ -195,7 +244,8 @@ export function migrateSettings(input, platform = process.platform) {
   if (!isPlainObject(input)) return createDefaultSettings(platform);
   const defaults = createDefaultSettings(platform),
     version = Number(input.version) || 1;
-  if (version >= 7) return mergeSettings(defaults, input);
+  if (version >= 7)
+    return applyCurrentDefaults(mergeSettings(defaults, input), input, defaults);
   const merged = mergeSettings(defaults, input);
   for (const [section, key, oldValue] of OLD_SCALAR_DEFAULTS)
     if (input[section] && input[section][key] === oldValue)
@@ -259,11 +309,11 @@ export function migrateSettings(input, platform = process.platform) {
         fanoutRequests: isAndroid ? 4 : 6,
         idleSamples: 4,
         timeoutMs: 2e4,
-        minBytes: isAndroid ? 6 * MIB : 12 * MIB,
       };
     for (const [key, oldValue] of Object.entries(oldLoadDefaults))
       if (input.load?.[key] === oldValue) merged.load[key] = defaults.load[key];
   }
+  applyCurrentDefaults(merged, input, defaults);
   merged.version = 7;
   merged.migratedFrom = version;
   return merged;
