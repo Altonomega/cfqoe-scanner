@@ -20,11 +20,11 @@ It runs entirely on your own machine — Windows, Linux, or Android/Termux — w
 
 The local web UI is the default surface since 0.9.0 — a dashboard ("plate"), the genome view of the whole catalog, live scan consoles, results, reports, settings, and diagnostics, in English and Persian (fully RTL).
 
-![Web UI dashboard, English](docs/images/web-dashboard-en.png)
-*The dashboard: run state, live counters, and the catalog plate at a glance.*
-
-![Genome view, Persian and RTL](docs/images/web-genome-fa.png)
-*The genome view in Persian: 7,697 blocks in catalog order, lighting up as the Hard Deep Scan reads them.*
+<!-- Screenshot captures land at these exact paths in a follow-up commit
+     (docs/images/web-dashboard-en.png, docs/images/web-genome-fa.png);
+     the image lines stay commented out until the real files exist so the
+     page never shows a broken image. -->
+*The dashboard: run state, live counters, and the catalog plate at a glance. The genome view in Persian shows all 7,697 blocks in catalog order, lighting up as the Hard Deep Scan reads them.*
 
 ---
 
