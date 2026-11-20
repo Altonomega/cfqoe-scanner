@@ -126,7 +126,15 @@ en: {
   "genome.title": "Hard Deep Scan", "genome.sub": "The whole Cloudflare catalog as one plate: {ranges} ranges · {blocks} blocks · {addrs} addresses. One cell = one \u2068/24\u2069 block.",
   "genome.ideo": "Ideogram — {ranges} ranges (width ∝ blocks)", "genome.plate": "The plate — {blocks} blocks",
   "genome.trace": "Trace — last probes (height = speed)", "genome.liveTop": "Live top", "genome.liveNotes": "Live notes",
-  "genome.budget": "Budget", "genome.spent": "{spent} / {total} probes",
+  "genome.budget": "Budget", "genome.spent": "{spent} / {total} probes", "genome.spentOnly": "{spent} probes spent",
+  "genome.intro": "This scan walks the whole catalog block by block. Stop it any time — progress is checkpointed, and Resume continues where it stopped.",
+  "phn.calibrating": "finding the speed this path can carry", "phn.screening": "quick eligibility probes for everyone",
+  "phn.delayed-retry": "a second chance for the silent ones", "phn.verification": "re-probing the survivors, verdicts early",
+  "phn.tunnel": "full measurement through the tunnel",
+  "phn.hard-primer": "three quick probes in every block", "phn.hard-coverage": "evening out the lopsided blocks",
+  "phn.hard-expansion": "more probes where life showed up", "phn.hard-retry": "a second chance for the silent ones",
+  "phn.hard-verify": "finalists re-probed; early verdicts", "phn.hard-finalize": "the best, measured end to end",
+  "console.ledgerNote": "Bars show progress through each stage. SPRT is the early-verdict test — it can settle a candidate before every round finishes.",
   "genome.counters": "elapsed {elapsed} · alive {alive} · primed {primed} · expanded {expanded} · split {split}",
   "genome.legend": "Legend", "genome.tapHint": "Tap a cell for the block inspector.",
   "lg.unprobed": "unprobed", "lg.known": "known (reputation)", "lg.priming": "priming", "lg.alive": "alive (depth = rate)",
@@ -254,7 +262,15 @@ fa: {
   "genome.title": "اسکن عمیق (Hard Deep Scan)", "genome.sub": "کل کاتالوگ کلودفلر به‌صورت یک پلیت: {ranges} رینج · {blocks} بلاک · {addrs} آدرس. هر خانه = یک بلاک \u2068/24\u2069.",
   "genome.ideo": "ایدیوگرام — {ranges} رینج (عرض متناسب با تعداد بلاک)", "genome.plate": "پلیت — {blocks} بلاک",
   "genome.trace": "ردّ پروب‌ها — آخرین پروب‌ها (ارتفاع = سرعت)", "genome.liveTop": "برترهای زنده", "genome.liveNotes": "یادداشت‌های زنده",
-  "genome.budget": "بودجه", "genome.spent": "{spent} / {total} پروب",
+  "genome.budget": "بودجه", "genome.spent": "{spent} / {total} پروب", "genome.spentOnly": "{spent} پروب مصرف‌شده",
+  "genome.intro": "این اسکن کل کاتالوگ را بلاک‌به‌بلاک طی می‌کند. هر وقت خواستید متوقفش کنید — پیشرفت چک‌پوینت می‌شود و «ادامه» از همان‌جا برمی‌دارد.",
+  "phn.calibrating": "پیدا کردن سرعتی که این مسیر می‌تواند حمل کند", "phn.screening": "پروب سریع صلاحیت برای همه",
+  "phn.delayed-retry": "فرصت دوباره برای ساکت‌ها", "phn.verification": "پروب دوباره بازمانده‌ها، با حکم زودهنگام",
+  "phn.tunnel": "اندازه‌گیری کامل از درون تونل",
+  "phn.hard-primer": "سه پروب سریع در هر بلاک", "phn.hard-coverage": "هم‌سطح‌کردن بلاک‌های ناهموار",
+  "phn.hard-expansion": "پروب بیشتر، هرجا نشانه حیات بود", "phn.hard-retry": "فرصت دوباره برای ساکت‌ها",
+  "phn.hard-verify": "پروب دوباره فینالیست‌ها؛ حکم زودهنگام", "phn.hard-finalize": "بهترین‌ها، اندازه‌گیری‌شده از سر تا ته",
+  "console.ledgerNote": "نوارها پیشرفت هر مرحله را نشان می‌دهند. SPRT آزمون حکم زودهنگام است — می‌تواند پیش از پایان همه دورها تکلیف یک کاندید را روشن کند.",
   "genome.counters": "گذشته {elapsed} · زنده {alive} · پرایمرشده {primed} · گسترش‌یافته {expanded} · شکافته {split}",
   "genome.legend": "راهنما", "genome.tapHint": "برای بازرس بلاک، روی یک خانه بزنید.",
   "lg.unprobed": "پروب‌نشده", "lg.known": "شناخته‌شده (اعتبار)", "lg.priming": "در حال پرایمر", "lg.alive": "زنده (عمق = نرخ)",
@@ -833,17 +849,17 @@ const lower95Of = (r) => (r.scores?.reliabilityLower95 == null ? "–" : f1(r.sc
    shown, so a subset can never crown its own first row as #1. */
 function resultsTable(rows, compact, ranks) {
   const rk = ranks || rows.map((_, i) => i + 1);
-  const head = `<tr><th class="num">${t("col.rank")}</th><th>${t("col.ip")}</th><th>${t("col.verdict")}</th><th class="num">${t("col.cons")}</th><th>${t("col.parts")}</th>${compact ? "" : `<th class="num">${t("col.raw")}</th><th class="num">${t("col.overall")}</th>`}<th>${t("col.elig")}</th><th class="num">${t("col.mbps")}</th><th class="num">${t("col.rpm")}</th><th>${t("col.pop")}</th><th>${t("col.gate")}</th>${compact ? "" : `<th>${t("col.why")}</th>`}</tr>`;
+  const head = `<tr><th class="num c-rank">${t("col.rank")}</th><th class="c-ip">${t("col.ip")}</th><th class="c-verdict">${t("col.verdict")}</th><th class="num c-cons">${t("col.cons")}</th><th class="c-parts">${t("col.parts")}</th>${compact ? "" : `<th class="num c-raw">${t("col.raw")}</th><th class="num c-over">${t("col.overall")}</th>`}<th class="c-elig">${t("col.elig")}</th><th class="num c-mbps">${t("col.mbps")}</th><th class="num c-rpm">${t("col.rpm")}</th><th class="c-pop">${t("col.pop")}</th><th class="c-gate">${t("col.gate")}</th>${compact ? "" : `<th class="c-why">${t("col.why")}</th>`}</tr>`;
   const body = rows.map((r, i) => {
     const rank = rk[i], best = rank === 1;
     return `<tr class="${best ? "best " : ""}clickable" data-i="${i}">
-    <td class="num">${best ? `<span class="rank-stamp">1</span>` : rank}</td><td>${best ? '<span class="tick-a">▸</span> ' : ""}${D(r.ip)}</td><td>${esc(verdictWord(r))}</td>
-    <td class="num score">${f1(r.scores?.conservative)}</td><td>${partsCell(r)}</td>${compact ? "" : `<td class="num dim">${f1(r.scores?.conservativeUncapped)}</td><td class="num">${f1(r.scores?.overall)}</td>`}
-    <td>${D((r.eligibility?.successes ?? "–") + "/" + (r.eligibility?.attempts ?? "–"))} <span class="dim">↓${lower95Of(r)}</span></td>
-    <td class="num">${f2(r.load?.sustainedMbps)}</td><td class="num">${f1(r.load?.rpm)}</td><td>${esc(r.eligibility?.pops?.dominant || "–")}</td>
-    <td>${esc(gateWord(r.gates?.status))}</td>${compact ? "" : `<td>${esc(limitingWord(r))}</td>`}</tr>`;
+    <td class="num c-rank">${best ? `<span class="rank-stamp">1</span>` : rank}</td><td class="c-ip">${best ? '<span class="tick-a">▸</span> ' : ""}${D(r.ip)}</td><td class="c-verdict">${esc(verdictWord(r))}</td>
+    <td class="num score c-cons">${f1(r.scores?.conservative)}</td><td class="c-parts">${partsCell(r)}</td>${compact ? "" : `<td class="num dim c-raw">${f1(r.scores?.conservativeUncapped)}</td><td class="num c-over">${f1(r.scores?.overall)}</td>`}
+    <td class="c-elig" data-l="${esc(t("col.elig"))}">${D((r.eligibility?.successes ?? "–") + "/" + (r.eligibility?.attempts ?? "–"))} <span class="dim">↓${lower95Of(r)}</span></td>
+    <td class="num c-mbps" data-l="${esc(t("col.mbps"))}">${f2(r.load?.sustainedMbps)}</td><td class="num c-rpm" data-l="${esc(t("col.rpm"))}">${f1(r.load?.rpm)}</td><td class="c-pop" data-l="${esc(t("col.pop"))}">${esc(r.eligibility?.pops?.dominant || "–")}</td>
+    <td class="c-gate" data-l="${esc(t("col.gate"))}">${esc(gateWord(r.gates?.status))}</td>${compact ? "" : `<td class="c-why">${esc(limitingWord(r))}</td>`}</tr>`;
   }).join("");
-  return `<div class="tbl-scroll"><table class="data ${compact ? "res-c" : "res-f"}"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  return `<table class="data res ${compact ? "res-c" : "res-f"}"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 /* The row expansion: a structured ledger, not a text dump. Every
    value is the report's, under the same display rules as the table;
@@ -928,16 +944,18 @@ const HARD_PHASES = ["hard-primer", "hard-coverage", "hard-expansion", "hard-ret
 Views.genome = (el) => {
   el.innerHTML = `
     <h2 class="view-title">${esc(t("genome.title"))}</h2>
-    <p class="view-sub">${esc(t("genome.sub", { ranges: fmt(753), blocks: fmt(7697), addrs: fmt(1970432) }))}</p>
+    <p class="view-sub" id="g-sub"></p>
     <div class="form-actions" style="margin:0 0 14px">
       <button class="btn btn-primary" id="g-begin">${esc(t("ui.beginReplication"))}</button>
       <button class="btn" id="g-resume" hidden>${esc(t("ui.resume"))}</button>
       <button class="btn danger" id="g-stop" hidden>${esc(t("ui.stopRun"))}</button>
       <span class="readout" id="g-phase"></span>
     </div>
+    <p class="plain-note">${esc(t("genome.intro"))}</p>
+    <p class="plain-note" id="g-resume-line" hidden></p>
     <div class="console-grid">
       <div class="console-side">
-        <div class="rail" id="g-rail">${HARD_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note"></span></div>`).join("")}</div>
+        <div class="rail" id="g-rail">${HARD_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note">${esc(t("phn." + p))}</span></div>`).join("")}</div>
         <h3 class="sec-head">${esc(t("genome.budget"))}</h3>
         <div class="budget-meter"><div id="g-budget-fill"></div></div>
         <div class="readout" id="g-budget-text"></div>
@@ -951,7 +969,7 @@ Views.genome = (el) => {
       </div>
       <div class="console-main">
         <div class="readout dim" id="g-counters"></div>
-        <h3 class="sec-head">${esc(t("genome.ideo", { ranges: fmt(753) }))}<span class="right mono" id="g-ideo-cap"></span></h3>
+        <h3 class="sec-head"><span id="g-ideo-head"></span><span class="right mono" id="g-ideo-cap"></span></h3>
         <div class="ideo-wrap"><canvas class="ideo" id="g-ideo" height="26"></canvas></div>
         <div class="plate-frame"><div id="g-plate"></div></div>
         <p class="plain-note">${esc(t("genome.tapHint"))} <span class="mono" id="g-hover"></span></p>
@@ -979,7 +997,7 @@ Views.genome = (el) => {
     cx.fillStyle = P.plate2; cx.fillRect(0, 4, W, 12);
     let x = 0; cx.fillStyle = P.ink40; cx.font = "9px " + getComputedStyle(document.body).getPropertyValue("--mono");
     app.catalog.ranges.forEach((r, ri) => {
-      const w = (r.blocks / 7697) * W;
+      const w = (r.blocks / (app.catalog.blocksTotal || 7697)) * W;
       cx.fillRect(x + w - 0.5, 4, 1, 12);
       if (app.genome) { let split = false; const start = app.catalog.ranges.slice(0, ri).reduce((a, y) => a + y.blocks, 0); for (let k = 0; k < r.blocks && !split; k++) if (app.genome.state[start + k] === 7) split = true; if (split) cx.fillRect(x, 18, Math.max(2, w), 2); }
       if (w > 52) cx.fillText(r.cidr, x + 2, 13);
@@ -990,7 +1008,7 @@ Views.genome = (el) => {
   ideo.addEventListener("click", (e) => {
     if (!app.catalog) return;
     const r = ideo.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width;
-    let acc = 0, idx = 0; for (let ri = 0; ri < app.catalog.ranges.length; ri++) { acc += app.catalog.ranges[ri].blocks / 7697; if (fx <= acc) { idx = ri; break; } }
+    let acc = 0, idx = 0; for (let ri = 0; ri < app.catalog.ranges.length; ri++) { acc += app.catalog.ranges[ri].blocks / (app.catalog.blocksTotal || 7697); if (fx <= acc) { idx = ri; break; } }
     plate.inspect = plate.inspect === idx ? null : idx; plate.resize(); drawIdeo();
   });
   const railTo = (phase) => {
@@ -998,13 +1016,24 @@ Views.genome = (el) => {
     $$("#g-rail .station").forEach((s, k) => { s.className = "station" + (idx >= 0 && k < idx ? " done" : idx >= 0 && k === idx ? " now" : ""); });
     $("#g-phase").textContent = phase ? t("phase." + phase) : "";
   };
+  // Every count on this page is derived from what the server serves:
+  // the catalog totals from the catalog payload, the probe budget
+  // from the served settings (the budget cap is the server's
+  // platform call, never a literal copied into the client).
+  let budgetTotal = null;
+  const subTo = () => {
+    const c = app.catalog;
+    $("#g-sub").textContent = t("genome.sub", { ranges: fmt(c?.rangesTotal), blocks: fmt(c?.blocksTotal), addrs: fmt(c?.addressesTotal) });
+    $("#g-ideo-head").textContent = t("genome.ideo", { ranges: fmt(c?.rangesTotal) });
+  };
   const countersTo = () => {
     const c = app.counters;
     $("#g-counters").textContent = t("genome.counters", { elapsed: mmss(app.elapsedMs()), alive: fmt(c.eligible || 0), primed: fmt(c.blocksPrimed || 0), expanded: fmt(c.blocksExpanded || 0), split: fmt(c.blocksSplit || 0) });
-    const total = 72000, spent = c.probesSpent || 0;
-    $("#g-budget-fill").style.width = Math.min(100, (spent / total) * 100) + "%";
-    $("#g-budget-text").textContent = t("genome.spent", { spent: fmt(spent), total: fmt(total) });
+    const spent = c.probesSpent || 0;
+    $("#g-budget-fill").style.width = budgetTotal ? Math.min(100, (spent / budgetTotal) * 100) + "%" : "0%";
+    $("#g-budget-text").textContent = budgetTotal ? t("genome.spent", { spent: fmt(spent), total: fmt(budgetTotal) }) : t("genome.spentOnly", { spent: fmt(spent) });
     $("#g-ticker").innerHTML = app.ticker.slice(0, 8).map((x) => `<div>${esc(x)}</div>`).join("");
+    subTo();
   };
   const journalEl = $("#g-journal"), journalLines = [];
   const pushJournal = (text) => {
@@ -1021,7 +1050,11 @@ Views.genome = (el) => {
     else if (app.runMode === "hard" && app.runStatus === "failed") done.innerHTML = `${esc(t("console.failed", { reason: app.runError || t("err.unknown") }))} <a href="#/diagnostics">${esc(t("nav.diagnostics"))}</a>`;
     else done.innerHTML = "";
     $("#g-begin").hidden = running || app.runStatus === "paused-done";
-    $("#g-resume").hidden = !(app.runStatus === "paused-done" && ((app.state || {}).status || {}).resumeAvailable);
+    const canResume = app.runStatus === "paused-done" && ((app.state || {}).status || {}).resumeAvailable;
+    $("#g-resume").hidden = !canResume;
+    const rl = $("#g-resume-line");
+    rl.hidden = !canResume;
+    if (canResume) rl.textContent = t("dash.resumeLine", { phase: t("phase." + (app.phase || "hard-primer")), probes: fmt(app.counters.probesSpent || 0) });
     const stop = $("#g-stop");
     stop.hidden = !running;
     if (app.stopping) { stop.disabled = true; stop.textContent = t("ui.stopping"); }
@@ -1029,15 +1062,16 @@ Views.genome = (el) => {
     railTo(app.phase); countersTo();
   };
   const topTo = (rows) => {
-    $("#g-top").innerHTML = rows && rows.length ? `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th class="num">↓95</th><th>${t("col.pop")}</th><th>${t("col.ip")} /24</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td class="num">${fmt2(r.eligibility.confidence95.lower)}</td><td>${esc(r.eligibility.pops.dominant)}</td><td>${D(r.block || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="empty">${esc(t("console.noCandidates"))}</p>`;
+    $("#g-top").innerHTML = rows && rows.length ? `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th class="num">↓95</th><th>${t("col.pop")}</th><th>${t("col.ip")} /24</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td class="num">${pct1(r.eligibility.confidence95.lower)}</td><td>${esc(r.eligibility.pops.dominant || "–")}</td><td>${D(r.block || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="empty">${esc(t("console.noCandidates"))}</p>`;
   };
   const laneTo = () => {
-    $("#g-lane").innerHTML = app.lane.length ? `<div class="lane"><h3 class="sec-head">${esc(t("lane.title"))}</h3>${app.lane.map((r) => `<div class="lane-row"><span>${D(r.ip)}</span><span class="ev">transfer <b>${r.scores?.overall ?? "–"}</b></span><span class="ev">streaming <b>${r.streaming?.sustainableMbps ?? "–"} Mbps</b></span><span class="ev">load <b>${r.load?.sustainedMbps ?? "–"} Mbps · ${r.load?.rpm ?? "–"} rpm</b></span><span class="ev">${esc(r.verdict?.label || "")}</span></div>`).join("")}</div>` : "";
+    $("#g-lane").innerHTML = app.lane.length ? `<div class="lane"><h3 class="sec-head">${esc(t("lane.title"))}</h3>${app.lane.map((r) => `<div class="lane-row"><span>${D(r.ip)}</span><span class="ev">${esc(t("det.overall"))} <b>${f1(r.scores?.overall)}</b></span><span class="ev">${esc(t("comp.streaming"))} <b>${fTrim(r.streaming?.sustainableMbps)} Mbps</b></span><span class="ev">${esc(t("comp.load"))} <b>${f2(r.load?.sustainedMbps)} Mbps · ${f1(r.load?.rpm)} rpm</b></span><span class="ev">${esc(verdictWord(r))}</span></div>`).join("")}</div>` : "";
   };
   $("#g-begin").addEventListener("click", () => startRun("hard"));
   $("#g-resume").addEventListener("click", () => startRun("hard", true));
   $("#g-stop").addEventListener("click", (e) => armButton(e.currentTarget, "ui.stopRunArm", stopRun));
   let lastCounters = 0;
+  app.src.getSettings().then(({ settings }) => { const b = settings?.hard?.budgetProbes; if (Number.isFinite(b)) { budgetTotal = b; countersTo(); } }).catch(() => {});
   app.src.setTail(true); // the journal is fed by the run's log stream
   const clock = setInterval(() => { if (app.runStatus === "running") countersTo(); }, 1000);
   drawIdeo(); controlsTo(); topTo(((app.state || {}).run || {}).top); laneTo();
@@ -1078,11 +1112,11 @@ async function openInspector(i, e) {
     <h4>${D(d.cidr)}</h4>
     <div class="dim">${esc(t("insp.range", { range: d.range, lane: d.lane }))}</div>
     <div class="rule"></div>
-    <dl><dt>${esc(t("insp.thisRun"))}</dt><dd>${d.run ? esc(t("insp.probes", { ok: d.run.successes, n: d.run.attempts, rate: fmt2(d.run.rate), lower: fmt2(d.run.lower) })) : "–"}</dd>
+    <dl><dt>${esc(t("insp.thisRun"))}</dt><dd>${d.run ? esc(t("insp.probes", { ok: d.run.successes, n: d.run.attempts, rate: pct1(d.run.rate), lower: pct1(d.run.lower) })) : "–"}</dd>
     <dt>${esc(t("insp.primer"))}</dt><dd>${D(d.primer.attempts)} · ${esc(t("insp.tier", { tier: d.primer.tier }))}</dd>
     <dt>${esc(t("insp.halves"))}</dt><dd>${D(d.halves.lower.s + "/" + d.halves.lower.n)} · ${D(d.halves.upper.s + "/" + d.halves.upper.n)}</dd>
     <dd></dd><dd>${esc(d.halves.split ? t("insp.splitYes") : t("insp.splitNo", { p: fmt2(d.halves.splitP) }))}</dd>
-    <dt>${esc(t("insp.reputation"))}</dt><dd>${rep ? esc(t("insp.repLine", { n: rep.attempts, runs: rep.runs, rate: fmt2(rep.rate), date: rep.lastSeen, ip: rep.best, colo: rep.colo })) : esc(t("insp.unknown"))}</dd>
+    <dt>${esc(t("insp.reputation"))}</dt><dd>${rep ? esc(t("insp.repLine", { n: rep.attempts, runs: rep.runs, rate: pct1(rep.rate), date: rep.lastSeen, ip: rep.best, colo: rep.colo })) : esc(t("insp.unknown"))}</dd>
     <dt>${esc(t("insp.candidates"))}</dt><dd>${d.candidates && d.candidates.length ? d.candidates.map((c) => D(c.ip)).join(" · ") : esc(t("insp.noCand"))}</dd></dl>
     <div class="rule"></div>
     <a href="#/results?block=${encodeURIComponent(d.cidr)}">${esc(t("insp.openResults"))}</a>`;
@@ -1107,7 +1141,7 @@ Views.scan = (el, parts) => {
     <button class="btn danger" id="sc-stop" hidden>${esc(t("ui.stopRun"))}</button><span class="readout" id="sc-phase"></span></div>
     <p class="plain-note" id="sc-hint" hidden>${esc(t("console.idleHint"))}</p>
     <div class="console-grid" style="margin-top:18px">
-      <div class="console-side"><div class="rail" id="sc-rail">${SCAN_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note"></span></div>`).join("")}</div></div>
+      <div class="console-side"><div class="rail" id="sc-rail">${SCAN_PHASES.map((p) => `<div class="station" data-ph="${p}">${esc(t("phase." + p))}<span class="st-note">${esc(t("phn." + p))}</span></div>`).join("")}</div></div>
       <div class="console-main">
         <div class="readout dim" id="sc-counters"></div>
         <p class="nowline"><span class="pulse" id="sc-pulse" hidden></span><span id="sc-now"></span></p>
@@ -1115,6 +1149,7 @@ Views.scan = (el, parts) => {
         <div class="ticker journal" id="sc-journal"></div>
         <h3 class="sec-head">${esc(t("console.ledger"))}</h3>
         <div id="sc-ledger"><p class="empty">${esc(t("console.noCandidates"))}</p></div>
+        <p class="plain-note">${esc(t("console.ledgerNote"))}</p>
         <p id="sc-done"></p>
       </div>
     </div>`;
@@ -1123,7 +1158,7 @@ Views.scan = (el, parts) => {
   const renderLedger = () => {
     const rows = [...app.ledger.values()].filter((r) => r.stage);
     if (!rows.length) return;
-    $("#sc-ledger").innerHTML = `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th>SPRT</th><th>${t("col.verdict")}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${seg(r.stage?.elig || 0)} ${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td>${seg(r.stage?.sprt || 0)} <span class="dim">${esc(r.sprt || "")}</span></td><td>${esc(r.verdict?.label || "")}</td></tr>`).join("")}</tbody></table>`;
+    $("#sc-ledger").innerHTML = `<table class="data"><thead><tr><th>${t("col.ip")}</th><th>${t("col.elig")}</th><th>SPRT</th><th>${t("col.verdict")}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${D(r.ip)}</td><td>${seg(r.stage?.elig || 0)} ${D(r.eligibility.successes + "/" + r.eligibility.attempts)}</td><td>${seg(r.stage?.sprt || 0)} <span class="dim">${esc(r.sprt || "")}</span></td><td>${esc(r.verdict ? verdictWord(r) : "")}</td></tr>`).join("")}</tbody></table>`;
   };
   const railTo = (phase) => { const idx = SCAN_PHASES.indexOf(phase); $$("#sc-rail .station").forEach((s, k) => { s.className = "station" + (idx >= 0 && k < idx ? " done" : idx >= 0 && k === idx ? " now" : ""); }); $("#sc-phase").textContent = phase && t("phase." + phase) ? t("phase." + phase) : ""; };
   // The journal: the run narrated in plain words, newest last,

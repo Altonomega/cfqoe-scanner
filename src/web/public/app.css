@@ -122,7 +122,7 @@ a:hover { text-decoration: underline; }
 .journal { max-height: 196px; }
 
 .run-banner {
-  display: flex; gap: 12px; align-items: baseline; padding: 7px 20px;
+  display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 7px 20px;
   border-bottom: 1px solid var(--rule); background: var(--plate); font-size: 12.5px;
 }
 .rb-label { font: 11px var(--mono); letter-spacing: 0.1em; color: var(--g); font-weight: 700; }
@@ -201,13 +201,29 @@ tr.detail-row td { background: var(--plate); font-size: 12px; white-space: pre-w
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--plate); }
 
-/* results tables: the payoff screen. The frame scrolls sideways on
-   narrow screens so the columns keep their typeset rhythm instead
-   of crushing; the ranking's head row sits on the plate under a
-   full ink rule, stamped with a filled rank marker. */
-.tbl-scroll { overflow-x: auto; }
-table.data.res-f { min-width: 940px; }
-table.data.res-c { min-width: 660px; }
+/* results tables: the payoff screen. The ranking's head row sits
+   on the plate under a full ink rule, stamped with a filled rank
+   marker. Narrow screens get deliberate tiers, never a sideways
+   scroll of the payoff data: at tablet width the raw/overall/why
+   columns retire into the row's detail expansion; at phone width
+   the table becomes ledger rows — a headline line (rank, IP,
+   verdict, the conservative anchor) over a labeled evidence line,
+   the labels carried in the cells' own data-l attributes so they
+   are localized with the render. */
+@media (max-width: 1020px) {
+  table.data.res .c-raw, table.data.res .c-over, table.data.res .c-why { display: none; }
+}
+@media (max-width: 760px) {
+  table.data.res thead { display: none; }
+  table.data.res tr.clickable { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 10px; padding: 7px 2px; border-bottom: 1px solid var(--rule); }
+  table.data.res tr.clickable td { border-bottom: none; padding: 1px 0; }
+  table.data.res tr.best { background: var(--plate); }
+  table.data.res tr.best td { background: transparent; }
+  table.data.res td.c-cons { margin-inline-start: auto; }
+  table.data.res td.c-elig, table.data.res td.c-mbps, table.data.res td.c-rpm, table.data.res td.c-pop, table.data.res td.c-gate { font-size: 11.5px; color: var(--ink-60); }
+  table.data.res td[data-l]::before { content: attr(data-l) " · "; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; }
+  table.data.res tr.detail-row, table.data.res tr.detail-row td { display: block; }
+}
 table.data td.score { font-weight: 650; font-size: 13px; }
 table.data tr.best td { background: var(--plate); border-top: 1px solid var(--ink); }
 .rank-stamp { display: inline-block; min-width: 19px; padding: 1px 0; text-align: center; background: var(--ink); color: var(--paper); border-radius: 2px; font-weight: 700; }
@@ -372,6 +388,7 @@ canvas.trace { margin-top: 10px; }
   .rail .station::before { left: 4px; top: -5px; }
   .inspector { left: 12px !important; right: 12px; width: auto; }
   .run-banner { padding-left: 12px; padding-right: 12px; }
+  .btn { min-height: 40px; padding: 8px 14px; }
 }
 
 /* ---------- bilingual: Persian + RTL ----------
