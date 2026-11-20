@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   runHardScan,
   hasHardScanState,
@@ -55,6 +56,16 @@ const silentLogger = {
   warn() {},
   error() {},
 };
+const FAKE_XRAY = fileURLToPath(new URL('./fixtures/fake-xray.js', import.meta.url));
+const FAKE_XRAY_DEAD = fileURLToPath(
+  new URL('./fixtures/fake-xray-dead.js', import.meta.url),
+);
+const FAKE_XRAY_COUNTING = fileURLToPath(
+  new URL('./fixtures/fake-xray-counting.js', import.meta.url),
+);
+const WORKLOADS_CATALOG = fileURLToPath(
+  new URL('../config/workloads.default.json', import.meta.url),
+);
 
 function tempLayout(ranges) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfqoe-wiring-'));
@@ -77,6 +88,24 @@ function makeSettings(hardOverrides = {}) {
   settings.tunnel.enabled = false;
   Object.assign(settings.hard, { concurrency: 4 }, hardOverrides);
   return settings;
+}
+
+// Tunnel-enabled settings + a layout whose workloads catalog exists
+// (the finalize tunnel stage loads it before locating Xray).
+function makeTunnelSettings(xrayPath, hardOverrides = {}) {
+  const settings = makeSettings(hardOverrides);
+  settings.tunnel.enabled = true;
+  settings.tunnel.xrayPath = xrayPath;
+  settings.tunnel.limit = 2;
+  settings.tunnel.rounds = 1;
+  settings.load.enabled = false;
+  return settings;
+}
+
+function tunnelLayout(ranges) {
+  const layout = tempLayout(ranges);
+  fs.copyFileSync(WORKLOADS_CATALOG, layout.workloadsFile);
+  return layout;
 }
 
 function readNdjsonIps(file) {
@@ -331,5 +360,176 @@ test(
     );
     assert.equal(hasHardScanState(layout), false);
     assert.equal(fs.existsSync(layout.reputationFile), false);
+  },
+);
+
+test(
+  'finalize tunnel backfill: a dead Xray promotes the next finalists until the 2x attempt budget',
+  { timeout: 60000 },
+  async () => {
+    const layout = tunnelLayout(RANGES);
+    const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
+    const events = [];
+    const result = await runHardScan({
+      vlessUri: VLESS_URI,
+      settings: makeTunnelSettings(FAKE_XRAY_DEAD, {
+        engine: 'blocks',
+        budgetProbes: 400,
+      }),
+      layout,
+      logger: silentLogger,
+      runId: 'wiring-backfill-dead',
+      task: catalog.task,
+      onProgress: (event) => events.push(event),
+    });
+    assert.equal(result.canceled, false);
+    const rows = result.report.results,
+      pool = rows.filter((row) => row.selection?.eligibleForTunnel),
+      tested = rows.filter((row) => row.selection?.tunnelTested);
+    // The pool is much larger than the budget: without backfill exactly
+    // `limit` (2) rows would be tested; with it, attempts continue to
+    // the 2x budget (4) and stop there — the pool is never walked whole.
+    assert.ok(pool.length > 4, `pool ${pool.length} exceeds the attempt budget`);
+    assert.equal(tested.length, 4);
+    assert.ok(tested.every((row) => row.selection.eligibleForTunnel));
+    // The finalize progress total grows with the promotions and the run
+    // ends exactly on it: 4 completed of 4 planned.
+    const finalize = events.filter((event) => 'hard-finalize' === event.phase);
+    assert.ok(finalize.length > 0);
+    assert.equal(Math.max(...finalize.map((event) => event.total)), 4);
+    assert.equal(finalize.at(-1).completed, 4);
+    assert.equal(finalize.at(-1).total, 4);
+  },
+);
+
+test(
+  'finalize tunnel backfill: with no stage enabled there is nothing to score, so no promotion happens',
+  { timeout: 60000 },
+  async () => {
+    const layout = tunnelLayout(RANGES);
+    // A genuinely startable Xray copy (the fixture is not executable in
+    // the repo tree; on platforms where a script still cannot spawn,
+    // every start fails instead — the observable outcome is the same,
+    // because with no stage enabled an attempt counts as scored either
+    // way and the walk stops at the limit).
+    const xrayCopy = path.join(layout.root, 'fake-xray.js');
+    fs.copyFileSync(FAKE_XRAY, xrayCopy);
+    fs.chmodSync(xrayCopy, 0o755);
+    const settings = makeTunnelSettings(xrayCopy, {
+      engine: 'blocks',
+      budgetProbes: 400,
+    });
+    settings.browsing.enabled = false;
+    settings.streaming.enabled = false;
+    const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
+    const events = [];
+    const result = await runHardScan({
+      vlessUri: VLESS_URI,
+      settings,
+      layout,
+      logger: silentLogger,
+      runId: 'wiring-backfill-idle',
+      task: catalog.task,
+      onProgress: (event) => events.push(event),
+    });
+    assert.equal(result.canceled, false);
+    const rows = result.report.results,
+      tested = rows.filter((row) => row.selection?.tunnelTested);
+    assert.equal(tested.length, 2);
+    const finalize = events.filter((event) => 'hard-finalize' === event.phase);
+    assert.equal(Math.max(...finalize.map((event) => event.total)), 2);
+  },
+);
+
+// P-4 launch pinning: the counting fixture records one line per `run`
+// invocation (the candidate IP from the generated config), so the
+// session-per-candidate contract is asserted on process starts, not on
+// log text. The healthy run disables every stage (as in the idle test
+// above) so its rounds turn on session handling alone — fast, and no
+// probe traffic. The failing run enables browsing: with no stage
+// enabled an attempt counts as scored vacuously (hasScoredTunnelStage)
+// and even a dead-Xray candidate would burn its slot, while a required
+// stage makes the failed attempt genuinely unscored so backfill
+// promotes the next candidate. The dead fixture throws at startXray,
+// before any probe could run, so enabling the stage costs no traffic.
+function countingTunnelRun({ fail }) {
+  const layout = tunnelLayout(RANGES);
+  // The fixture is not executable in the repo tree; run a copy.
+  const xrayCopy = path.join(layout.root, 'fake-xray-counting.js');
+  fs.copyFileSync(FAKE_XRAY_COUNTING, xrayCopy);
+  fs.chmodSync(xrayCopy, 0o755);
+  const settings = makeTunnelSettings(xrayCopy, {
+    engine: 'blocks',
+    budgetProbes: 400,
+  });
+  settings.tunnel.limit = 1;
+  settings.tunnel.rounds = 2;
+  settings.browsing.enabled = fail;
+  settings.streaming.enabled = false;
+  const countFile = path.join(layout.root, 'xray-runs.ndjson');
+  const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
+  return (async () => {
+    process.env.FAKE_XRAY_COUNT_FILE = countFile;
+    if (fail) process.env.FAKE_XRAY_COUNT_FAIL = '1';
+    try {
+      const result = await runHardScan({
+        vlessUri: VLESS_URI,
+        settings,
+        layout,
+        logger: silentLogger,
+        runId: fail ? 'wiring-p4-failing' : 'wiring-p4-healthy',
+        task: catalog.task,
+      });
+      const starts = fs
+        .readFileSync(countFile, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim());
+      return { result, starts };
+    } finally {
+      delete process.env.FAKE_XRAY_COUNT_FILE;
+      delete process.env.FAKE_XRAY_COUNT_FAIL;
+    }
+  })();
+}
+
+test(
+  'finalize tunnel sessions (P-4): one Xray start serves every round of a healthy candidate',
+  { timeout: 60000 },
+  async () => {
+    const { result, starts } = await countingTunnelRun({ fail: false });
+    assert.equal(result.canceled, false);
+    const tested = result.report.results.filter(
+      (row) => row.selection?.tunnelTested,
+    );
+    // Limit 1 and the attempt scores (no stage enabled), so exactly one
+    // candidate is measured — over 2 rounds, with a single start.
+    assert.equal(tested.length, 1);
+    assert.deepEqual(starts, [tested[0].ip]);
+  },
+);
+
+test(
+  'finalize tunnel sessions (P-4): a failed round discards the session — the next round starts fresh',
+  { timeout: 60000 },
+  async () => {
+    const { result, starts } = await countingTunnelRun({ fail: true });
+    assert.equal(result.canceled, false);
+    const tested = result.report.results.filter(
+      (row) => row.selection?.tunnelTested,
+    );
+    // No attempt scores, so backfill spends the whole 2x attempt budget
+    // (2 candidates at limit 1). Every start fails, so each candidate's
+    // second round must invoke `run` again instead of reusing the dead
+    // session: exactly 2 starts per candidate, 4 in total.
+    assert.equal(tested.length, 2);
+    assert.equal(starts.length, 4);
+    const perCandidate = new Map();
+    for (const ip of starts)
+      perCandidate.set(ip, (perCandidate.get(ip) ?? 0) + 1);
+    assert.deepEqual(
+      [...perCandidate.keys()].sort(),
+      tested.map((row) => row.ip).sort(),
+    );
+    assert.deepEqual([...perCandidate.values()].sort(), [2, 2]);
   },
 );

@@ -23,7 +23,7 @@ export async function calibrateConcurrency({
   levels = [1, 2, 4, 8, 12, 16],
   controlTask,
   latencyInflationLimit = 0.1,
-  failureRateIncreaseLimit = 0.02,
+  failureRateIncreaseLimit = 0.1,
   eventLoopLagLimitMs = 50,
 }) {
   if (typeof controlTask !== 'function') throw new Error('controlTask is required');

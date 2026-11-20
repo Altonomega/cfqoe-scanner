@@ -45,6 +45,7 @@ import {
   selectDelayedRetries,
 } from './hard-scheduler.js';
 import { buildEligibilitySummary } from './report.js';
+import { DEFAULT_SETTINGS } from './config/settings.js';
 import { summarizePops } from './measurement/confidence.js';
 import { classifyProbeError } from './probe/errors.js';
 import {
@@ -230,8 +231,8 @@ export async function runBlockScreening({
   runId = null,
 }) {
   const hard = settings.hard;
-  const seed = settings.scan?.seed ?? 404;
-  const minimumSuccessRate = settings.scan?.minimumSuccessRate ?? 0.6;
+  const seed = settings.scan?.seed ?? DEFAULT_SETTINGS.scan.seed;
+  const minimumSuccessRate = settings.scan?.minimumSuccessRate ?? DEFAULT_SETTINGS.scan.minimumSuccessRate;
   const screeningRounds = screeningRoundsFor(hard);
   const workerConcurrency = positiveInt(concurrency ?? hard.concurrency, 1);
   const waveProbeSize = hard.expansionWaveFactor * workerConcurrency;
@@ -534,6 +535,7 @@ export async function runBlockScreening({
     if (hard.delayedRetry) {
       for (const retry of selectDelayedRetries(results, {
         maxRetries: workerConcurrency,
+        minimumSuccessRate,
       })) {
         retryQueue.push({ ip: retry.ip, range: retry.range, block: retry.block });
         totals.retryQueued += 1;

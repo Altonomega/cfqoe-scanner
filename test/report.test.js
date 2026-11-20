@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { applyTunnelResults, buildCandidateSummary, buildEligibilitySummary, countLimitingFactors, rankCandidates, writeReport, renderTopList, REPORT_SCHEMA } from '../src/report.js';
+import { applyTunnelResults, buildCandidateSummary, buildEligibilitySummary, countLimitingFactors, hasScoredTunnelStage, rankCandidates, writeReport, renderTopList, REPORT_SCHEMA } from '../src/report.js';
 function candidate(ip, { browsingScore, streamingScore, ok = true }) { return buildCandidateSummary({ ip, range: 'x', eligibility: [{ ok, handshakeMs: 120, connectMs: 40, cfRay: 'x-FRA' }, { ok, handshakeMs: 130, connectMs: 45, cfRay: 'y-FRA' }], tunnel: { browsing: [{ score: browsingScore, bytes: 1000 }], streaming: [{ score: streamingScore, sustainableMbps: 8, quality: '1080p', bytes: 5000 }] } }); }
 test('candidate summary aggregates stages',()=>{const s=candidate('1.1.1.1',{browsingScore:80,streamingScore:90});assert.equal(s.measurement.status,'complete');assert.ok(s.scores.overall>80);});
 test('eligibility-only is unmeasured without manufactured load gates',()=>{const s=buildCandidateSummary({ip:'2.2.2.2',range:'x',eligibility:[{ok:true}],tunnel:null,requirements:{browsing:true,streaming:true,load:true}});assert.equal(s.measurement.status,'unmeasured');assert.equal(s.scores.overall,null);assert.equal(s.gates,null);assert.equal(s.limitingFactor,null);assert.equal(s.measurement.qoeConfidence,'none');assert.equal(s.verdict.label,'unverified');assert.equal(s.verdict.limiting,null);});
@@ -22,4 +22,29 @@ test('eligibility-only rows do not pollute limiting-factor totals',()=>{
     {measurement:{status:'complete'},gates:{limiting:'rpm'}},
   ];
   assert.deepEqual(countLimitingFactors(rows),{rpm:1});
+});
+
+test('backfill verdict: a finite score in any enabled stage fills the slot',()=>{
+  const req={browsing:true,streaming:true,load:true};
+  assert.equal(hasScoredTunnelStage({browsing:[{score:80}],streaming:[],load:[]},req),true);
+  assert.equal(hasScoredTunnelStage({browsing:[],streaming:[{score:55}],load:[]},req),true);
+  assert.equal(hasScoredTunnelStage({browsing:[],streaming:[],load:[{ok:true,downlink:{totalBytes:1000,sustainedMbps:10},uplink:{},latency:{}}]},req),true);
+});
+test('backfill verdict: errored or empty stages leave the slot open',()=>{
+  const req={browsing:true,streaming:true,load:true};
+  assert.equal(hasScoredTunnelStage(null,req),false);
+  assert.equal(hasScoredTunnelStage({browsing:[],streaming:[],load:[]},req),false);
+  assert.equal(hasScoredTunnelStage({browsing:[{score:null,error:'boom'}],streaming:[{score:NaN,error:'nope'}],load:[{ok:false}]},req),false);
+  // An ok load run with no measurable metric still scores nothing.
+  assert.equal(hasScoredTunnelStage({browsing:[],streaming:[],load:[{ok:true,downlink:{},uplink:{},latency:{}}]},req),false);
+});
+test('backfill verdict: disabled stages cannot score and do not count',()=>{
+  // Browsing scored, but browsing is disabled in this run: the score is
+  // not part of the report, so it must not fill the slot either.
+  assert.equal(hasScoredTunnelStage({browsing:[{score:80}],streaming:[{score:null}],load:[]},{browsing:false,streaming:true,load:true}),false);
+  assert.equal(hasScoredTunnelStage({browsing:[{score:80}],streaming:[{score:null}],load:[]},{browsing:true,streaming:true,load:true}),true);
+});
+test('backfill verdict: with no stage enabled there is nothing to score',()=>{
+  assert.equal(hasScoredTunnelStage(null,{browsing:false,streaming:false,load:false}),true);
+  assert.equal(hasScoredTunnelStage({browsing:[],streaming:[],load:[]},{}),true);
 });

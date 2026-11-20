@@ -18,6 +18,9 @@ import {
   runEligibilityBatch,
   runAdaptiveEligibilityBatch,
   selectDelayedRetries,
+  selectRecheckFinalists,
+  tunnelAttemptBudget,
+  shouldAttemptTunnelCandidate,
 } from "./hard-scheduler.js";
 import { probeWebsocket } from "./probe/websocket.js";
 import { startXray } from "./xray/manager.js";
@@ -28,6 +31,7 @@ import { probeStreaming } from "./streaming/probe.js";
 import {
   applyTunnelResults,
   buildEligibilitySummary,
+  hasScoredTunnelStage,
   rankCandidates,
   renderTopList,
   REPORT_SCHEMA,
@@ -273,6 +277,9 @@ async function runDelayedRetries({
   let recovered = 0;
   const results = await runEligibilityBatch({
     candidates: retryCandidates,
+    // Cross-section read, deliberately: Hard has no retry-rounds key of
+    // its own — the delayed-retry batch reuses scan.rounds (clamped to
+    // 2..16), the screening depth the shared pipeline runs at.
     rounds: clampInt(settings.scan.rounds, 2, 16),
     concurrency,
     minimumSuccessRate: settings.scan.minimumSuccessRate,
@@ -475,7 +482,9 @@ export async function runHardScan({
     calibrationCandidates = sampleCandidates({
       ranges,
       perRange: 1,
-      max: Math.max(4, requestedConcurrency),
+      // The control hunt probes up to 32 candidates (scan-calibration);
+      // the pool must be at least that deep or the cap is fiction here.
+      max: Math.max(32, requestedConcurrency),
       seed: 404,
     }),
     calibration = await calibrateWebsocketConcurrency({
@@ -520,6 +529,13 @@ export async function runHardScan({
     controlIp: calibration.controlIp ?? null,
     levels: calibration.levels,
   });
+  // Same no-control warning as the Full path: calibration no-ops and the
+  // sweep runs at the requested concurrency unmeasured.
+  if ("no_working_control" === calibration.reason)
+    logger.warn("hard.calibration.no_control", {
+      requestedConcurrency: calibration.requestedConcurrency,
+      controlProbes: calibration.controlProbes ?? null,
+    });
   const concurrency = calibration.selectedConcurrency,
     screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5),
     blocksEngine = isBlocksState(state);
@@ -748,6 +764,7 @@ export async function runHardScan({
       if (settings.hard.delayedRetry)
         for (const retry of selectDelayedRetries(results, {
           maxRetries: concurrency,
+          minimumSuccessRate: settings.scan.minimumSuccessRate,
         }))
           (appendJsonLine(state.files.retryFile, {
             ip: retry.ip,
@@ -839,8 +856,15 @@ export async function runHardScan({
         clampInt(settings.hard.recheckTop, 20, 200),
       );
       if (0 === count) return candidates;
-      const finalists = candidates
-          .slice(0, count)
+      // The recheck budget is spent under the per-block diversity cap
+      // (hard.recheckPerBlock): at most that many finalists from any one
+      // catalog block are re-verified, and the walk continues deeper
+      // into the list so a single hot /24 cannot crowd out the rest of
+      // the catalog's finalists.
+      const finalists = selectRecheckFinalists(candidates, {
+          limit: count,
+          perBlock: clampInt(settings.hard.recheckPerBlock, 4, 200),
+        })
           .map((entry) => ({
             ip: entry.ip,
             range: entry.range,
@@ -972,32 +996,86 @@ export async function runHardScan({
         streamingWorkloads = settings.streaming.enabled
           ? resolveWorkloads({ settings, catalog, kind: "streaming" })
           : [],
-        finalists = candidates
-          .filter(
-            (entry) =>
-              (entry.eligibility.confidence95?.lower ??
-                entry.eligibility.successRate) >= 0 &&
-              entry.eligibility.successRate >= settings.scan.minimumSuccessRate,
-          )
-          .slice(0, settings.tunnel.limit),
-        total = finalists.length * settings.tunnel.rounds;
-      let completed = 0;
+        // The full rate-passing pool is kept, not just the first
+        // `limit`: backfill (P-3) walks deeper whenever an attempt
+        // yields no scored stage, exactly as in the Full path.
+        pool = candidates.filter(
+          (entry) =>
+            entry.eligibility.successRate >= settings.scan.minimumSuccessRate,
+        ),
+        attemptBudget = tunnelAttemptBudget(settings.tunnel.limit, pool.length),
+        // Same derivation as the `requirements` the summaries below are
+        // built with — the backfill verdict and the report must agree
+        // on which stages count.
+        tunnelRequirements = {
+          browsing: settings.browsing.enabled,
+          streaming: settings.streaming.enabled,
+          load: Boolean(settings.load?.enabled),
+        };
+      let completed = 0,
+        attempts = 0,
+        scoredSlots = 0,
+        plannedCandidates = 0,
+        total = 0;
+      // The progress total counts the candidates the stage currently
+      // plans to measure: the slot limit at first, growing by one per
+      // earned promotion, never beyond the attempt budget. It is
+      // recomputed at each candidate's start from accounted state
+      // (attempts/scored of finished candidates only), so a total never
+      // shrinks or overshoots mid-candidate.
+      const computePlannedCandidates = () =>
+        Math.min(
+          attempts +
+            Math.max(
+              0,
+              Math.min(
+                settings.tunnel.limit - scoredSlots,
+                pool.length - attempts,
+              ),
+            ),
+          attemptBudget,
+        );
+      plannedCandidates = computePlannedCandidates();
+      total = plannedCandidates * settings.tunnel.rounds;
       onProgress({
         phase: "hard-finalize",
         completed,
         total,
-        eligible: finalists.length,
+        eligible: plannedCandidates,
         failed: 0,
         note: "final QoE ranking",
       });
-      for (const candidate of finalists) {
+      for (const candidate of pool) {
+        if (
+          !shouldAttemptTunnelCandidate({
+            attempts,
+            scored: scoredSlots,
+            limit: settings.tunnel.limit,
+            budget: attemptBudget,
+          })
+        )
+          break;
+        // Past the first `limit` attempts every attempt is a promotion
+        // into a slot an unscored candidate left empty — log it, so a
+        // report with more tested rows than the limit is explainable.
+        if (attempts >= settings.tunnel.limit)
+          logger.info("hard.tunnel.backfill", {
+            ip: candidate.ip,
+            attempts,
+            scored: scoredSlots,
+          });
+        plannedCandidates = computePlannedCandidates();
+        total = plannedCandidates * settings.tunnel.rounds;
+        attempts += 1;
         const browsingResults = [],
           streamingResults = [],
           loadResults = [];
+        // One Xray session per candidate across rounds, as in the Full
+        // path: restart only when a round fails (see scan.js).
+        let xrayHandle = null;
         for (let round = 1; round <= settings.tunnel.rounds; round += 1) {
-          let xrayHandle = null;
           try {
-            xrayHandle = await startXray({
+            xrayHandle ??= await startXray({
               xrayPath: located.path,
               vless,
               candidateIp: candidate.ip,
@@ -1087,25 +1165,36 @@ export async function runHardScan({
               round,
               error: error.message,
             });
-          } finally {
             await xrayHandle?.stop();
+            xrayHandle = null;
           }
           ((completed += 1),
             onProgress({
               phase: "hard-finalize",
               completed,
               total,
-              eligible: finalists.length,
+              eligible: plannedCandidates,
               failed: 0,
               currentRange: candidate.range,
               note: candidate.ip,
             }));
         }
+        await xrayHandle?.stop();
         tunnelResults.set(candidate.ip, {
           browsing: browsingResults,
           streaming: streamingResults,
           load: loadResults,
         });
+        // Only a candidate that scored in some enabled stage fills its
+        // slot; anything else leaves the slot open for the next pool
+        // entry (bounded by the attempt budget in the loop header).
+        if (
+          hasScoredTunnelStage(
+            tunnelResults.get(candidate.ip),
+            tunnelRequirements,
+          )
+        )
+          scoredSlots += 1;
       }
       return { xrayInfo, tunnelResults };
     })({

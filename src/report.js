@@ -574,6 +574,33 @@ export function applyTunnelResults(
     },
   };
 }
+// The tunnel backfill policy's verdict (Probe P-3): did this candidate
+// produce a score in at least one ENABLED stage? Defined here, from the
+// same primitives applyTunnelResults scores with — a finite browsing or
+// streaming observation score, a finite load score — so the pipelines'
+// notion of "scored" can never drift from the report's own. A stage that
+// is disabled cannot score and does not count; when no stage is enabled
+// there is nothing to score, so the candidate counts as scored and the
+// caller must not spend backfill attempts on it.
+export function hasScoredTunnelStage(tunnel, requirements = {}) {
+  const browsing = Boolean(requirements.browsing),
+    streaming = Boolean(requirements.streaming),
+    load = Boolean(requirements.load);
+  if (!browsing && !streaming && !load) return true;
+  if (
+    browsing &&
+    (tunnel?.browsing || []).some((result) => Number.isFinite(result?.score))
+  )
+    return true;
+  if (
+    streaming &&
+    (tunnel?.streaming || []).some((result) => Number.isFinite(result?.score))
+  )
+    return true;
+  if (load && Number.isFinite(scoreLoad(summarizeLoad(tunnel?.load || []))))
+    return true;
+  return false;
+}
 export function buildCandidateSummary({
   ip,
   range,

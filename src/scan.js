@@ -12,13 +12,20 @@ import {
   runEligibilityBatch,
   runAdaptiveEligibilityBatch,
   selectDelayedRetries,
+  orderForTunnelSelection,
+  tunnelAttemptBudget,
+  shouldAttemptTunnelCandidate,
 } from "./hard-scheduler.js";
 import { probeBrowsing } from "./browsing/probe.js";
 import { probeStreaming } from "./streaming/probe.js";
 import { runLoadProbe } from "./probe/load.js";
 import { startXray } from "./xray/manager.js";
 import { locateXray } from "./platform/xray.js";
-import { buildCandidateSummary, writeReport } from "./report.js";
+import {
+  buildCandidateSummary,
+  hasScoredTunnelStage,
+  writeReport,
+} from "./report.js";
 import { resolveWorkloads, loadCatalog } from "./config/settings.js";
 import { calibrateWebsocketConcurrency } from "./measurement/scan-calibration.js";
 import { createProgressRecorder } from "./logging/logger.js";
@@ -78,6 +85,7 @@ export async function runScan({
       calibration: effectiveSettings.calibration,
       requestedConcurrency: effectiveSettings.scan.concurrency,
       timeoutMs: effectiveSettings.scan.timeoutMs,
+      seed,
     });
   effectiveSettings = {
     ...effectiveSettings,
@@ -104,6 +112,14 @@ export async function runScan({
     controlIp: calibration.controlIp ?? null,
     levels: calibration.levels,
   });
+  // A no-control outcome means calibration silently no-ops and the scan
+  // runs at the requested concurrency unmeasured — on exactly the
+  // filtered paths that most needed measuring. Surface it at warn.
+  if ("no_working_control" === calibration.reason)
+    logger.warn("scan.calibration.no_control", {
+      requestedConcurrency: calibration.requestedConcurrency,
+      controlProbes: calibration.controlProbes ?? null,
+    });
   logger.info("scan.start", {
     runId,
     target,
@@ -144,7 +160,11 @@ export async function runScan({
         candidate: result.item,
         observations: result.observations,
       })),
-      { maxRetries: effectiveSettings.scan.delayedRetry.maxCandidates },
+      {
+        maxRetries: effectiveSettings.scan.delayedRetry.maxCandidates,
+        minimumSuccessRate: effectiveSettings.scan.minimumSuccessRate,
+        singleProbe: true,
+      },
     );
     if (retryCandidates.length) {
       logger.info("scan.delayed_retry.start", {
@@ -246,6 +266,13 @@ export async function runScan({
       );
     }),
     tunnelByIp = new Map();
+  // One requirements object for the tunnel stage and the summaries: the
+  // backfill verdict and the report must agree on which stages count.
+  const tunnelRequirements = {
+    browsing: effectiveSettings.browsing.enabled,
+    streaming: effectiveSettings.streaming.enabled,
+    load: Boolean(effectiveSettings.load?.enabled),
+  };
   let xrayStatus = { enabled: !1, path: null, reason: "disabled" };
   if (effectiveSettings.tunnel.enabled && eligible.length > 0) {
     const xrayLocation = locateXray({
@@ -269,27 +296,92 @@ export async function runScan({
               kind: "streaming",
             })
           : [],
-        tunnelCandidates = eligible.slice(0, effectiveSettings.tunnel.limit);
-      let completedCount = 0;
-      const totalCount =
-        tunnelCandidates.length * effectiveSettings.tunnel.rounds;
+        // Slots are dealt in post-verification order (accepted, then
+        // inconclusive, then screening-only), not the screening order
+        // `eligible` arrives in — a finalist SPRT accepted after ranking
+        // 6th on screening evidence must not lose its slot to an
+        // inconclusive finalist that ranked 3rd. The full ordered pool
+        // is kept, not just the first `limit`: backfill (P-3) walks
+        // deeper whenever an attempt yields no scored stage.
+        tunnelCandidates = orderForTunnelSelection(eligible, {
+          decisionByIp: decisionsByIp,
+          verificationRateByIp: new Map(
+            [...verificationByIp].map(([ip, observations]) => [
+              ip,
+              successRate(observations),
+            ]),
+          ),
+        });
+      let completedCount = 0,
+        attempts = 0,
+        scoredSlots = 0,
+        totalCount = 0;
+      const attemptBudget = tunnelAttemptBudget(
+          effectiveSettings.tunnel.limit,
+          tunnelCandidates.length,
+        ),
+        // The progress total counts the candidates the stage currently
+        // plans to measure: the slot limit at first, growing by one per
+        // earned promotion, never beyond the attempt budget. It is
+        // recomputed at each candidate's start from accounted state
+        // (attempts/scored of finished candidates only), so a total
+        // never shrinks or overshoots mid-candidate.
+        computeTotalCount = () =>
+          Math.min(
+            attempts +
+              Math.max(
+                0,
+                Math.min(
+                  effectiveSettings.tunnel.limit - scoredSlots,
+                  tunnelCandidates.length - attempts,
+                ),
+              ),
+            attemptBudget,
+          ) * effectiveSettings.tunnel.rounds;
+      totalCount = computeTotalCount();
       emitProgress({
         phase: "tunnel",
         completed: completedCount,
         total: totalCount,
       });
       for (const { candidate } of tunnelCandidates) {
+        if (
+          !shouldAttemptTunnelCandidate({
+            attempts,
+            scored: scoredSlots,
+            limit: effectiveSettings.tunnel.limit,
+            budget: attemptBudget,
+          })
+        )
+          break;
+        // Past the first `limit` attempts every attempt is a promotion
+        // into a slot an unscored candidate left empty — log it, so a
+        // report with more tested rows than the limit is explainable.
+        if (attempts >= effectiveSettings.tunnel.limit)
+          logger.info("tunnel.backfill", {
+            ip: candidate.ip,
+            attempts,
+            scored: scoredSlots,
+          });
+        totalCount = computeTotalCount();
+        attempts += 1;
         const browsingResults = [],
           streamingResults = [],
           loadResults = [];
+        // One Xray session per candidate serves every round: the rounds
+        // are measurement repetitions, and a per-round restart paid a
+        // fresh process startup — and its failure surface — for each
+        // (Research ran 24 launches per run). A failed round stops the
+        // session, so the next round starts a fresh one; a healthy
+        // session is stopped once, after the final round.
+        let xrayHandle = null;
         for (
           let round = 1;
           round <= effectiveSettings.tunnel.rounds;
           round += 1
         ) {
-          let xrayHandle = null;
           try {
-            xrayHandle = await startXray({
+            xrayHandle ??= await startXray({
               xrayPath: xrayLocation.path,
               vless,
               candidateIp: candidate.ip,
@@ -434,8 +526,10 @@ export async function runScan({
               round,
               error: error.message,
             });
-          } finally {
+            // A session that failed a round is not reused: stop it and
+            // let the next round start a fresh one.
             await xrayHandle?.stop();
+            xrayHandle = null;
           }
           completedCount += 1;
           emitProgress({
@@ -445,11 +539,22 @@ export async function runScan({
             ip: candidate.ip,
           });
         }
+        await xrayHandle?.stop();
         tunnelByIp.set(candidate.ip, {
           browsing: browsingResults,
           streaming: streamingResults,
           load: loadResults,
         });
+        // Only a candidate that scored in some enabled stage fills its
+        // slot; anything else leaves the slot open for the next pool
+        // entry (bounded by the attempt budget in the loop header).
+        if (
+          hasScoredTunnelStage(
+            tunnelByIp.get(candidate.ip),
+            tunnelRequirements,
+          )
+        )
+          scoredSlots += 1;
       }
     } else
       ((xrayStatus = { enabled: !1, path: null, reason: "xray_not_found" }),
@@ -464,11 +569,7 @@ export async function runScan({
           eligibility:
             verificationObs || observationsByIp.get(candidate.ip) || [],
           tunnel: tunnelByIp.get(candidate.ip) || null,
-          requirements: {
-            browsing: effectiveSettings.browsing.enabled,
-            streaming: effectiveSettings.streaming.enabled,
-            load: Boolean(effectiveSettings.load?.enabled),
-          },
+          requirements: tunnelRequirements,
           gateOverrides: effectiveSettings.load?.gates,
           gateProfile: effectiveSettings.load?.gateProfile,
           temporalBlocks: verificationObs ? 2 : 1,
