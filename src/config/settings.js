@@ -268,10 +268,35 @@ export function migrateSettings(input, platform = process.platform) {
   merged.migratedFrom = version;
   return merged;
 }
-export function loadSettings(filePath) {
+export function loadSettings(filePath, { logger } = {}) {
+  // The optional logger is the entry points' bootstrap logger, created
+  // before any settings exist. Without it this function is structurally
+  // unloggable — it runs before every logger creation site — so a
+  // corrupt file or a settings migration would leave no trace anywhere.
+  let raw;
   try {
-    return migrateSettings(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    raw = fs.readFileSync(filePath, "utf8");
   } catch {
+    logger?.info?.("settings.loaded", { source: "defaults", reason: "no-file" });
+    return mergeSettings(DEFAULT_SETTINGS, {});
+  }
+  try {
+    const settings = migrateSettings(JSON.parse(raw));
+    if (Number.isFinite(settings.migratedFrom))
+      logger?.info?.("settings.migrated", {
+        from: settings.migratedFrom,
+        to: SETTINGS_VERSION,
+      });
+    logger?.info?.("settings.loaded", {
+      source: "file",
+      version: settings.version,
+    });
+    return settings;
+  } catch (error) {
+    logger?.warn?.("settings.loaded", {
+      source: "defaults",
+      error: { class: "settings_load", message: error.message },
+    });
     return mergeSettings(DEFAULT_SETTINGS, {});
   }
 }

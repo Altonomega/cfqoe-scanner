@@ -481,6 +481,15 @@ export async function runHardScan({
     calibration: { ...settings.calibration, result: calibration },
   }),
     (state.settings = settings));
+  // Same calibration verdict as the Full path records (scan.calibration):
+  // the selected concurrency and why, with per-level results.
+  logger.info("hard.calibration", {
+    requestedConcurrency: calibration.requestedConcurrency,
+    selectedConcurrency: calibration.selectedConcurrency,
+    reason: calibration.reason,
+    controlIp: calibration.controlIp ?? null,
+    levels: calibration.levels,
+  });
   const concurrency = calibration.selectedConcurrency,
     screeningRounds = clampInt(settings.hard.screeningRounds, 1, 5),
     blocksEngine = isBlocksState(state);
@@ -512,6 +521,11 @@ export async function runHardScan({
       skipAgeDays: settings.hard.reputationSkipAgeDays,
       confirmAgeDays: settings.hard.reputationConfirmAgeDays,
       maxStoredAttempts: settings.hard.reputationMaxStoredAttempts,
+    });
+    // The load outcome steers the next primer (tiers are applied inside
+    // the engine and ride its start record); until now it was invisible.
+    logger.info("hard.reputation.loaded", {
+      records: Object.keys(reputationStore.blocks).length,
     });
   }
   let canceled = !1;

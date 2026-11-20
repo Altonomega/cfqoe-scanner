@@ -73,6 +73,17 @@ export async function runScan({
     },
     calibration: { ...effectiveSettings.calibration, result: calibration },
   };
+  // Calibration chose the operative concurrency (the configured value
+  // is only its ceiling); record the verdict with the per-level results
+  // or "why is this scan crawling at concurrency 1?" is unanswerable
+  // from the log.
+  logger.info("scan.calibration", {
+    requestedConcurrency: calibration.requestedConcurrency,
+    selectedConcurrency: calibration.selectedConcurrency,
+    reason: calibration.reason,
+    controlIp: calibration.controlIp ?? null,
+    levels: calibration.levels,
+  });
   logger.info("scan.start", {
     runId,
     target,

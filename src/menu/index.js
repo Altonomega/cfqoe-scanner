@@ -38,6 +38,7 @@ import {
   xrayInstallHint,
 } from "../platform/xray.js";
 import { createLogger, summarizeLogFile } from "../logging/logger.js";
+import { emitRunStart, emitRunEnd } from "../logging/lifecycle.js";
 import { runScan } from "../scan.js";
 import { runHardScan, hasHardScanState } from "../hard-scan.js";
 const MENU_TEXT = `\n  ${color.bold("1")}. Quick Scan            ${color.dim("fast screening, low confidence labels")}\n  ${color.bold("2")}. Full Scan             ${color.dim("wider sample with independent verification")}\n  ${color.bold("3")}. Research Scan         ${color.dim("slow, deeper repeated-evidence profile")}\n  ${color.bold("4")}. Hard Deep Scan        ${color.dim("block-adaptive catalog sweep, resumable")}\n  ${color.bold("5")}. Resume Hard Scan      ${color.dim("continue the last deep sweep")}\n  ${color.bold("6")}. VLESS Configuration   ${color.dim("import, inspect or remove your config")}\n  ${color.bold("7")}. Workload Settings     ${color.dim("choose or add transfer and streaming targets")}\n  ${color.bold("8")}. System Check          ${color.dim("verify Node, Xray and file protection")}\n  ${color.bold("9")}. Best IPs              ${color.dim("show the latest ranking with confidence")}\n  ${color.bold("10")}. Previous Results     ${color.dim("list saved reports")}\n  ${color.bold("11")}. Diagnostics          ${color.dim("summarize the newest log file")}\n  ${color.bold("12")}. Scan Settings        ${color.dim("edit measurement and verification numbers")}\n  ${color.bold("0")}. Exit\n`;
@@ -538,11 +539,17 @@ export function researchProfile(base) {
     },
   };
 }
-async function runScanFlow({ layout, settings }, mode) {
+async function runScanFlow({ layout }, mode) {
   if (!fs.existsSync(layout.secretFile))
     return void console.log(
       `\n  ${color.yellow("Import your VLESS configuration first (option 6).")}`,
     );
+  // Bootstrap order: the logger exists before settings load (so a
+  // migration or a corrupt settings file is recorded in this run's
+  // log), then it is re-leveled from the loaded settings.
+  const logger = createLogger({ level: "info", directory: layout.logs }),
+    settings = loadSettings(layout.settingsFile, { logger });
+  logger.setLevel(settings.logging.level);
   const profile =
       "quick" === mode
         ? quickProfile(settings)
@@ -550,10 +557,6 @@ async function runScanFlow({ layout, settings }, mode) {
           ? researchProfile(settings)
           : settings,
     vlessUri = readSecretFile(layout.secretFile),
-    logger = createLogger({
-      level: settings.logging.level,
-      directory: layout.logs,
-    }),
     title =
       "quick" === mode
         ? "Quick scan"
@@ -561,6 +564,8 @@ async function runScanFlow({ layout, settings }, mode) {
           ? "Research scan"
           : "Full scan";
   console.log(`\n  ${color.bold(title)} started. Run id: ${logger.runId}\n`);
+  const startedAt = Date.now();
+  emitRunStart(logger, { mode });
   try {
     const result = await runScan({
       vlessUri,
@@ -569,6 +574,14 @@ async function runScanFlow({ layout, settings }, mode) {
       logger,
       runId: logger.runId,
       onProgress: (event) => writeProgress(event.phase, event),
+    });
+    emitRunEnd(logger, {
+      status: "completed",
+      startedAt,
+      totals: {
+        eligible: result.eligibleCount,
+        candidates: result.candidateCount,
+      },
     });
     clearProgress();
     if (!result.xray.enabled) {
@@ -590,11 +603,18 @@ async function runScanFlow({ layout, settings }, mode) {
     console.log(`  Sampling seed: ${result.samplingSeed}`);
     console.log(`  Report: ${result.jsonPath}`);
     printRankings(result.report.results);
+  } catch (error) {
+    emitRunEnd(logger, {
+      status: "failed",
+      startedAt,
+      error: { class: "internal", message: error.message },
+    });
+    throw error;
   } finally {
     await logger.close();
   }
 }
-async function runHardScanFlow({ rl, layout, settings }, resume) {
+async function runHardScanFlow({ rl, layout }, resume) {
   if (!fs.existsSync(layout.secretFile))
     return void console.log(
       `\n  ${color.yellow("Import your VLESS configuration first (option 6).")}`,
@@ -603,11 +623,11 @@ async function runHardScanFlow({ rl, layout, settings }, resume) {
     return void console.log(
       `\n  ${color.yellow("No paused hard scan was found.")}`,
     );
-  const vlessUri = readSecretFile(layout.secretFile),
-    logger = createLogger({
-      level: settings.logging.level,
-      directory: layout.logs,
-    });
+  // Bootstrap logger before settings load — see runScanFlow.
+  const logger = createLogger({ level: "info", directory: layout.logs }),
+    settings = loadSettings(layout.settingsFile, { logger });
+  logger.setLevel(settings.logging.level);
+  const vlessUri = readSecretFile(layout.secretFile);
   rl.pause();
   console.log(
     `\n  ${color.bold(resume ? "Resuming hard scan" : "Hard deep scan")} started. Run id: ${logger.runId}`,
@@ -618,6 +638,8 @@ async function runHardScanFlow({ rl, layout, settings }, resume) {
   console.log(
     `  ${color.dim("Transient failures are retried later; finalists are verified adaptively. Press Q or Ctrl+C to stop safely.")}\n`,
   );
+  const startedAt = Date.now();
+  emitRunStart(logger, { mode: "hard", resume });
   try {
     const result = await runHardScan({
       vlessUri,
@@ -627,6 +649,14 @@ async function runHardScanFlow({ rl, layout, settings }, resume) {
       runId: logger.runId,
       resume,
       onProgress: (event) => writeProgress(event.phase, event),
+    });
+    emitRunEnd(logger, {
+      status: result.canceled ? "canceled" : "completed",
+      startedAt,
+      totals: {
+        eligible: result.eligibleCount,
+        stoppedReason: result.stoppedReason ?? null,
+      },
     });
     clearProgress();
     console.log(
@@ -640,6 +670,13 @@ async function runHardScanFlow({ rl, layout, settings }, resume) {
     );
     console.log(`  Report: ${result.jsonPath}`);
     printRankings(result.report.results);
+  } catch (error) {
+    emitRunEnd(logger, {
+      status: "failed",
+      startedAt,
+      error: { class: "internal", message: error.message },
+    });
+    throw error;
   } finally {
     await logger.close();
     rl.resume();
