@@ -335,6 +335,17 @@ export async function runHardScan({
   onStart = () => {},
   runId,
   resume = !1,
+  // Optional external cancel token (AbortSignal-shaped): the web
+  // layer's stop button. Its abort feeds the same `canceled` flag the
+  // terminal watcher (Q / Ctrl+C) sets below, so a programmatic stop
+  // is indistinguishable from a terminal one downstream — same
+  // checkpoint, same paused state, same stoppedReason. Absent (every
+  // terminal caller), nothing about the run changes.
+  signal = null,
+  // Optional observer for eligibility summaries as they are recorded
+  // (the web layer's genome tracker). Observer-only: it runs after
+  // the run's own bookkeeping and its return value is ignored.
+  onSummary = null,
   // Test seam with the scheduler/engine task shape: when null (every
   // production caller) probing binds to the real websocket probe below.
   task = null,
@@ -574,7 +585,7 @@ export async function runHardScan({
       records: Object.keys(reputationStore.blocks).length,
     });
   }
-  let canceled = !1;
+  let canceled = Boolean(signal && signal.aborted);
   const removeCancelWatcher = (function (onCancel) {
       const onSignal = () => onCancel("signal");
       process.on("SIGINT", onSignal);
@@ -618,6 +629,18 @@ export async function runHardScan({
     }),
     legacy = isLegacyState(state),
     nextCandidate = legacy ? nextLegacyCandidate : nextRoundRobinCandidate;
+  // The external token's listener lives for the whole run — unlike the
+  // terminal watcher above, which is removed after screening — because
+  // the finalize stage's own `canceled` checks (retry, verify, tunnel)
+  // keep honoring the flag, and a web stop pressed during finalize
+  // deserves the same graceful pause as one pressed during screening.
+  // Removed just before the return below; a signal whose run already
+  // ended is the caller's to discard with its controller.
+  const onExternalAbort = () => {
+    canceled = !0;
+  };
+  if (signal && "function" == typeof signal.addEventListener && !signal.aborted)
+    signal.addEventListener("abort", onExternalAbort, { once: !0 });
   onStart({
     engine: blocksEngine ? "blocks" : "legacy",
     blocks: blocksEngine ? blockPlan.totalBlocks : null,
@@ -651,6 +674,7 @@ export async function runHardScan({
         initialBlockState,
         onSummary: (summary) => {
           (appendJsonLine(state.files.eligibilityFile, summary),
+            onSummary?.(summary),
             (state.counts.tested += 1),
             summary.eligibility.successRate >= settings.scan.minimumSuccessRate
               ? (state.counts.eligible += 1)
@@ -1367,6 +1391,9 @@ export async function runHardScan({
       execution: state.execution,
       report: written.jsonPath,
     }),
+    signal &&
+      "function" == typeof signal.removeEventListener &&
+      signal.removeEventListener("abort", onExternalAbort),
     written
   );
 }

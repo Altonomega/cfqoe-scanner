@@ -283,9 +283,17 @@ const Live = {
     if (!r.ok) throw new Error("http " + r.status);
     return r.json();
   },
-  post(path, body) {
-    return this.api(path, { method: "POST", headers: { "Content-Type": "application/json", "X-CFQoE-Request": "1" }, body: JSON.stringify(body || {}) })
-      .catch((e) => ({ error: "unreachable", message: String(e.message || e) }));
+  async post(path, body) {
+    // Mutations resolve with the server's JSON body on every status:
+    // the contract's error codes (run_active, config_missing, …) are
+    // how the UI explains a refused action, so a 4xx body is a result,
+    // not a connection failure. Only a network-level failure (or a
+    // non-JSON body) maps to the synthetic errors.
+    try {
+      const r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CFQoE-Request": "1" }, body: JSON.stringify(body || {}) });
+      const data = await r.json().catch(() => null);
+      return data && typeof data === "object" ? data : { error: "bad_response" };
+    } catch { return { error: "unreachable" }; }
   },
   async probe() {
     try { const c = new AbortController(); const id = setTimeout(() => c.abort(), 1500); const r = await fetch("/api/state", { credentials: "same-origin", signal: c.signal }); clearTimeout(id); return r.ok; }

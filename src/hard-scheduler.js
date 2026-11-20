@@ -34,13 +34,19 @@ export async function probeCandidateRounds({ candidate, rounds, minimumSuccessRa
   return observations;
 }
 
-async function runWorkers({ candidates, concurrency, worker }) {
+// `isCanceled` is the caller's stop predicate (the web layer's cancel
+// token): workers stop pulling new candidates once it turns true, and
+// the batch functions below filter the un-started slots out of the
+// results. Absent (every terminal caller) no slot is ever left empty —
+// the historical behavior, byte for byte.
+async function runWorkers({ candidates, concurrency, worker, isCanceled = null }) {
   const results = new Array(candidates.length);
   const workerCount = Math.min(positiveInteger(concurrency), candidates.length);
   let cursor = 0;
   let finished = 0;
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (cursor < candidates.length) {
+      if (isCanceled && isCanceled()) return;
       const index = cursor++;
       results[index] = await worker(candidates[index], index);
       finished += 1;
@@ -50,28 +56,30 @@ async function runWorkers({ candidates, concurrency, worker }) {
   return results;
 }
 
-export async function runEligibilityBatch({ candidates, rounds, concurrency, minimumSuccessRate, task, onCandidateDone = null }) {
+export async function runEligibilityBatch({ candidates, rounds, concurrency, minimumSuccessRate, task, onCandidateDone = null, isCanceled = null }) {
   if (candidates.length === 0) return [];
   const results = await runWorkers({
-    candidates, concurrency,
+    candidates, concurrency, isCanceled,
     worker: async (candidate) => ({ candidate, observations: await probeCandidateRounds({ candidate, rounds, minimumSuccessRate, task }) }),
   });
-  for (const result of results) onCandidateDone?.({ ...result, total: candidates.length });
-  return results.map(({ finished, ...result }) => result);
+  const finished = results.filter(Boolean);
+  for (const result of finished) onCandidateDone?.({ ...result, total: candidates.length });
+  return finished.map(({ finished: _finished, ...result }) => result);
 }
 
-export async function runAdaptiveEligibilityBatch({ candidates, concurrency, task, sprt = {}, onCandidateDone = null }) {
+export async function runAdaptiveEligibilityBatch({ candidates, concurrency, task, sprt = {}, onCandidateDone = null, isCanceled = null }) {
   if (candidates.length === 0) return [];
   const config = createSprtConfig(sprt);
   const results = await runWorkers({
-    candidates, concurrency,
+    candidates, concurrency, isCanceled,
     worker: async (candidate) => {
       const evaluated = await runSprt({ task: (round) => task(candidate, round), config });
       return { candidate, ...evaluated };
     },
   });
-  for (const result of results) onCandidateDone?.({ ...result, total: candidates.length });
-  return results.map(({ finished, ...result }) => result);
+  const finished = results.filter(Boolean);
+  for (const result of finished) onCandidateDone?.({ ...result, total: candidates.length });
+  return finished.map(({ finished: _finished, ...result }) => result);
 }
 
 // Delayed-retry selection. A retry exists to rescue candidates a fresh

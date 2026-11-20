@@ -36,6 +36,11 @@ export function redact(value, seen = new WeakSet()) {
 // the checkpoint and the screen can never disagree about where a run
 // was. v1 files stay readable: summarizeLogFile tolerates their missing
 // fields and reports the absence honestly.
+// The live-stream ring: a late subscriber (a browser opening the
+// diagnostics tail mid-run, a reconnect) replays the tail of the run
+// from here instead of from the file. Bounded, oldest evicted first.
+export const LOG_RING_LIMIT = 1000;
+
 export function createLogger({ level = 'info', directory = null, runId = randomUUID(), quiet = false } = {}) {
   let threshold = LEVELS[level] ?? LEVELS.info;
   let stream = null;
@@ -44,6 +49,8 @@ export function createLogger({ level = 'info', directory = null, runId = randomU
   let seq = 0;
   let phase = null;
   const createdAtMs = performance.now();
+  const subscribers = new Set();
+  const ring = [];
 
   const counters = { debug: 0, info: 0, warn: 0, error: 0, fileErrors: 0 };
 
@@ -85,6 +92,23 @@ export function createLogger({ level = 'info', directory = null, runId = randomU
     if (!quiet && (levelName === 'warn' || levelName === 'error')) {
       process.stderr.write(`[${levelName}] ${event}\n`);
     }
+    // Sink C: live subscribers (the web UI's SSE bridge). Fan-out is
+    // fire-and-forget and happens after redaction, so a subscriber
+    // sees exactly what the file sees — never more. A subscriber that
+    // throws is unsubscribed on the spot: a broken observer must
+    // never slow, corrupt, or kill a measurement.
+    ring.push(record);
+    if (ring.length > LOG_RING_LIMIT) ring.splice(0, ring.length - LOG_RING_LIMIT);
+    if (subscribers.size > 0) {
+      for (const subscriber of [...subscribers]) {
+        if ((LEVELS[levelName] ?? 0) < subscriber.minLevel) continue;
+        try {
+          subscriber.fn(record);
+        } catch {
+          subscribers.delete(subscriber);
+        }
+      }
+    }
   }
 
   return {
@@ -104,6 +128,25 @@ export function createLogger({ level = 'info', directory = null, runId = randomU
     // Callers pass the same vocabulary their checkpoint uses.
     setPhase(name) {
       phase = typeof name === 'string' && name ? name : null;
+    },
+    // Live-stream sink (LOGGING §3.3): fn receives every subsequent
+    // record at or above minLevel, redacted, in write order — the
+    // same objects the file sink serializes. Returns an idempotent
+    // unsubscribe. Replay of what came before is `recent()` below.
+    subscribe(fn, { minLevel = 'debug' } = {}) {
+      if (typeof fn !== 'function') return () => {};
+      const subscriber = { fn, minLevel: LEVELS[minLevel] ?? LEVELS.debug };
+      subscribers.add(subscriber);
+      return () => {
+        subscribers.delete(subscriber);
+      };
+    },
+    // The newest records still in the ring (oldest first), for late
+    // subscribers and reconnect replay. A copy: callers may not mutate
+    // the buffer the logger keeps writing into.
+    recent(limit = LOG_RING_LIMIT) {
+      const count = Math.max(0, Math.min(Math.floor(limit) || 0, ring.length));
+      return ring.slice(ring.length - count);
     },
     async close() {
       if (!stream || streamFailed) return;
