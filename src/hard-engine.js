@@ -1009,6 +1009,13 @@ export async function runBlockScreening({
     }
   }
 
+  // Deliberate deviation, do not "fix": expansion emits NO phase-start
+  // event, unlike primer/coverage (see the emission note at probeChunk).
+  // The cancel/resume determinism contract keys on the first expansion
+  // event being a completed wave — a start event would arm a cancel
+  // before any expansion probe ran and shift the wave-aligned event
+  // sequence a resumed run must reproduce exactly. The first per-wave
+  // event below is this phase's announcement.
   async function runExpansionPhase() {
     if (logger && typeof logger.setPhase === 'function') {
       logger.setPhase('expansion');
