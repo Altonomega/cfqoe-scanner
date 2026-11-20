@@ -17,6 +17,7 @@ import { createDefaultSettings } from '../src/config/settings.js';
 import { buildRangePlan } from '../src/candidate/hard-order.js';
 import { buildEligibilitySummary } from '../src/report.js';
 import { paths } from '../src/platform/paths.js';
+import { createLogger } from '../src/logging/logger.js';
 import { createVirtualCatalog } from './fixtures/virtual-catalog.js';
 
 const VLESS_URI =
@@ -531,5 +532,70 @@ test(
       tested.map((row) => row.ip).sort(),
     );
     assert.deepEqual([...perCandidate.values()].sort(), [2, 2]);
+  },
+);
+
+test(
+  'progress records: engine progress lands exactly once (canonical hard.engine.progress, no wrapper mirror)',
+  { timeout: 60000 },
+  async () => {
+    const layout = tempLayout(RANGES);
+    const catalog = createVirtualCatalog({ ranges: RANGES, map: 'clustered', seed: 7 });
+    const logger = createLogger({
+      level: 'debug',
+      directory: layout.logs,
+      quiet: true,
+      runId: 'wiring-mirror',
+    });
+    const result = await runHardScan({
+      vlessUri: VLESS_URI,
+      settings: makeSettings({ engine: 'blocks', budgetProbes: 400 }),
+      layout,
+      logger,
+      runId: 'wiring-mirror',
+      task: catalog.task,
+    });
+    assert.equal(result.canceled, false);
+    await logger.close();
+
+    const records = fs
+      .readFileSync(logger.filePath, 'utf8')
+      .split('\n')
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line));
+    const engineProgress = records.filter(
+      (record) => record.event === 'hard.engine.progress',
+    );
+    assert.ok(engineProgress.length > 0, 'the engine wrote its canonical records');
+    assert.ok(
+      engineProgress.some((record) => record.phase === 'primer'),
+      'primer progress is among them',
+    );
+    // The W5 removal: the wrapper must not mirror engine phases into a
+    // second hard.progress record. Its own stages (calibrating,
+    // legacy screening, finalize) keep theirs.
+    const wrapperProgress = records.filter(
+      (record) => record.event === 'hard.progress',
+    );
+    for (const record of wrapperProgress) {
+      assert.ok(
+        !['primer', 'coverage', 'expansion'].includes(record.phase),
+        `hard.progress must not mirror the engine phase ${record.phase}`,
+      );
+    }
+    // And no payload-level duplicate either: an engine progress
+    // payload (phase + counters) appears under exactly one event name.
+    const seen = new Map();
+    for (const record of records) {
+      if (!String(record.event).endsWith('.progress')) continue;
+      const key = [record.phase, record.completed, record.total, record.eligible, record.failed].join('|');
+      if (seen.has(key)) {
+        assert.equal(
+          record.event,
+          seen.get(key),
+          `progress payload ${key} recorded under two event names`,
+        );
+      } else seen.set(key, record.event);
+    }
   },
 );

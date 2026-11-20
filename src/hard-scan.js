@@ -352,10 +352,16 @@ export async function runHardScan({
 }) {
   const vless = parseVlessUri(vlessUri);
   assertWebsocketCapable(vless);
-  // Progress events are mirrored into the log as hard.progress records
-  // (debug per event, info throttled). UI events keep their raw phase
-  // strings; the caller names the checkpoint's phase vocabulary for
-  // the record, so log, checkpoint and UI agree about where the run is.
+  // Progress events from THIS module's own stages (calibrating, the
+  // legacy traversal, finalize) are mirrored into the log as
+  // hard.progress records (debug per event, info throttled). UI events
+  // keep their raw phase strings; the caller names the checkpoint's
+  // phase vocabulary for the record, so log, checkpoint and UI agree
+  // about where the run is. The block engine's progress is NOT
+  // mirrored here: the engine already writes the canonical
+  // hard.engine.progress record itself, and a second mirror made
+  // every engine event land in the log twice (W1 gate C3, removed in
+  // W5) — one event, one record.
   const recordProgress = createProgressRecorder(logger, {
       event: "hard.progress",
     }),
@@ -704,7 +710,10 @@ export async function runHardScan({
           // The checkpoint phase tracks the engine's screening stage;
           // the split-coverage pass surfaces to callers under its own
           // progress label (hard-coverage) between primer and
-          // expansion.
+          // expansion. No recordProgress here: the engine logs its own
+          // hard.engine.progress records (see the note at the top of
+          // this function) — this callback only keeps the checkpoint
+          // phase and forwards the UI event.
           ("hard-primer" === event.phase
             ? (state.phase = "primer")
             : "hard-split-coverage" === event.phase
@@ -717,8 +726,7 @@ export async function runHardScan({
                 "hard-split-coverage" === event.phase
                   ? "hard-coverage"
                   : event.phase,
-            }),
-            recordProgress({ ...event, phase: state.phase }));
+            }));
         },
         logger,
         isCanceled: () => canceled,
