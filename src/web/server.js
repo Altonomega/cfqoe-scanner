@@ -762,10 +762,13 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       });
       if (!res.headersSent) {
         const status = error?.httpStatus ?? 500;
+        // Only this layer's own deliberate HTTP errors may surface
+        // their code; anything else (fs errors carry codes like
+        // ENOENT) collapses to the one static 500 shape (R-13).
         sendError(
           res,
           status,
-          error?.code ?? "internal",
+          status === 500 ? "internal" : (error?.code ?? "internal"),
           status === 500 ? "Internal error" : error.message,
         );
       } else {

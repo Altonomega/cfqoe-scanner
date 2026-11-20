@@ -816,3 +816,54 @@ test("server stop: POST /api/server/stop ends the surface and fires the host cal
   );
   await api.stop("test");
 });
+
+test("port fallback: a second server on a taken 8797 binds an ephemeral port and reports the truth (R-01)", async () => {
+  const first = makeLayout();
+  const second = makeLayout();
+  const a = await startServer(first.layout);
+  const b = await startServer(second.layout);
+  try {
+    // Whichever port `a` holds (8797 when free), `b` cannot share
+    // it: it must fall back and report its own real authority.
+    assert.ok(a.port > 0);
+    assert.notEqual(b.port, a.port);
+    assert.ok(b.port > 0);
+    // The fallback server is fully functional on its real authority,
+    // and its token never reaches its own log file.
+    const { res, cookie } = await bootstrap(b.port, b.bootstrapUrl);
+    assert.equal(res.status, 302);
+    const state = await rawRequest({ port: b.port, path: "/api/state", headers: authed(cookie) });
+    assert.equal(state.status, 200);
+    const token = new URL(b.bootstrapUrl).searchParams.get("t");
+    await b.api.stop("test");
+    const logText = fs
+      .readdirSync(second.layout.logs)
+      .map((name) => fs.readFileSync(path.join(second.layout.logs, name), "utf8"))
+      .join("\n");
+    assert.ok(logText.includes("web.start"));
+    assert.ok(!logText.includes(token), "the session token is never logged (R-02)");
+  } finally {
+    await a.api.stop("test");
+    await b.api.stop("test");
+  }
+});
+
+test("fault containment: a throwing handler answers a static 500 and the server lives on (R-17)", async () => {
+  const { root, layout } = makeLayout();
+  fs.rmSync(layout.rangesFile); // snapshot building now throws inside the handler
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const state = await rawRequest({ port, path: "/api/state", headers: authed(cookie) });
+    assert.equal(state.status, 500);
+    assert.deepEqual(JSON.parse(state.body), { error: "internal", message: "Internal error" });
+    // Neither the server nor the session died with the request.
+    const index = await rawRequest({ port, path: "/", headers: authed(cookie) });
+    assert.equal(index.status, 200);
+    const config = await rawRequest({ port, path: "/api/config", headers: authed(cookie) });
+    assert.equal(config.status, 200);
+    void root;
+  } finally {
+    await api.stop("test");
+  }
+});
