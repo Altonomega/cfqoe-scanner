@@ -631,7 +631,7 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     const digest = summarizeLogFile(path.join(layout.logs, entry.name));
     return sendJson(res, 200, {
       name: entry.name,
-      total: digest.totalRecords,
+      total: digest.total,
       errors: digest.byLevel.error ?? 0,
       warnings: digest.byLevel.warn ?? 0,
       byLevel: digest.byLevel,
@@ -722,8 +722,9 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     // R-07: mutations need the session (above), the custom header,
     // and an exact Origin match when an Origin is sent. No CORS
     // headers exist anywhere in this server (R-08); a preflight is
-    // just an unknown method here.
-    if (req.method !== "GET") {
+    // just an unsupported method, answered by the routing layer's
+    // 405 below — never with an allowance.
+    if (req.method === "POST") {
       if (req.headers[REQUEST_HEADER] !== "1") {
         logAuthFail("header", req.method);
         return sendError(res, 403, "forbidden", "Forbidden");
