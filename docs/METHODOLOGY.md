@@ -27,6 +27,9 @@ parameters from your own configuration.
 - `cf-ray` is recorded when present.
 - Every candidate is probed once per round in shuffled order.
 - Candidates below the configured success rate never reach the expensive stages.
+- Probes that fail transiently are retried after a delay rather than immediately. The retry
+  queue holds only candidates still below the success-rate threshold, ordered by Wilson upper
+  bound, so the candidates whose true rate is most plausibly high are rechecked first.
 
 Recorded: handshake median, handshake p90, handshake MAD, connect median (diagnostic),
 success rate.
@@ -35,7 +38,10 @@ success rate.
 
 For the surviving candidates the scanner writes a temporary Xray configuration that keeps your
 WebSocket metadata but dials the specific candidate IP, and starts a short-lived Xray process
-with a private SOCKS inbound on `127.0.0.1`.
+with a private SOCKS inbound on `127.0.0.1`. One Xray session per candidate serves all of that
+candidate's verification rounds — a candidate whose tunnel keeps failing gets a fresh session
+per attempt, so a sick process is never nursed, but a healthy one is not needlessly restarted
+between rounds either.
 
 All further traffic for that candidate goes through that tunnel, so measurements reflect the
 full path your client will actually use.
@@ -80,7 +86,10 @@ sustainable bitrate (20).
 The surviving candidates are driven with real traffic: sustained download and upload,
 latency measured both idle and under load, traffic shaping, fan-out requests and requests
 per minute (RPM). Absolute gates cap the resulting score, so a candidate that chokes under
-real load cannot keep a high score on the strength of the other stages.
+real load cannot keep a high score on the strength of the other stages. The gates are grouped
+into profiles; the default profile since 0.9.0 is `tolerant`, whose warn/fail thresholds are
+set from field evidence so that ordinary broadband variance warns instead of failing, while
+`balanced` and `strict` remain selectable for tighter judgements.
 
 Recorded: `sustainedMbps`, `shapingRatio`, `idleRttMs`, `loadedRttMs`, `rpm`, `jitterMs`,
 `lossRate`, `fanoutSuccess` and `uplinkMbps`.
@@ -116,6 +125,14 @@ stability of the measurement, not the quality of the IP.
 Finalists are verified adaptively with a sequential probability ratio test (SPRT, defaults
 `p0 = 0.60`, `p1 = 0.90`, `alpha = 0.05`, `beta = 0.10`). The decision — `accept`, `reject`
 or `inconclusive` — is stored in the report.
+
+## Calibration
+
+Before a scan, the eligibility concurrency is calibrated against the control endpoint: the
+scanner steps the concurrency up only while the failure rate stays close to the control's.
+Since 0.9.0 a step is rejected only when the failure rate grows by more than 0.10 over the
+control measurement (the bound was 0.02, which field logs showed vetoing every level and
+pinning scans to the lowest concurrency on ordinary network variance).
 
 ## Run-relative scope
 

@@ -8,6 +8,8 @@ CFQoE Scanner روی **Windows، Linux و Android/Termux** اجرا می‌شو�
 
 از نسخه **0.6.0** این ابزار دیگر یک pipeline خطی نیست؛ یک **سامانه اندازه‌گیری تطبیقی با عدم‌قطعیت آماری** است: هر عدد همراه با بازه اطمینان، برچسب اعتماد و وضعیت کامل/ناقص بودن گزارش می‌شود.
 
+از نسخه **0.9.0** سطح پیش‌فرض برنامه **رابط وب محلی** است: اجرا مرورگر را خودکار باز می‌کند و همه‌چیز — اسکن‌ها با پیشرفت زنده (در Hard Deep Scan نمای ژنوم بلوک‌ها)، تنظیمات، نتایج و عیب‌یابی — از همان‌جا دیده و کنترل می‌شود. رابط دوزبانه است (English و فارسی با RTL کامل) و فونت وزیرمتن به‌صورت محلی همراه برنامه عرضه می‌شود. منوی ترمینال همچنان کامل در دسترس است، اما فقط با اجرای صریح `cfqoe menu`. لاگ هر اجرا سقف نگهداری دارد و از بخش عیب‌یابی می‌توان یک **بسته اشکال‌زدایی** پاک‌سازی‌شده (debug bundle) برای ارسال به توسعه‌دهنده گرفت.
+
 ## ویژگی‌ها
 
 - پشتیبانی از Windows، Linux و Android/Termux بدون نیاز به سرور
@@ -69,14 +71,16 @@ cd ~/cfqoe-scanner
 
 # شروع کار
 
-1. برنامه را با لانچر سیستم‌عامل اجرا کنید.
+1. برنامه را با لانچر سیستم‌عامل اجرا کنید؛ مرورگر با رابط وب باز می‌شود. اگر مرورگر خودکار باز نشد، نشانی ورود (لینک خصوصی) چاپ‌شده در ترمینال را باز کنید — همان لینک تنها راه ورود است، آن را با کسی به اشتراک نگذارید.
 2. وارد `VLESS Configuration` شوید و URI را وارد کنید.
 3. `System Check` را اجرا کنید.
 4. ابتدا `Quick Scan` بزنید.
 5. نتیجه را از `Best IPs` ببینید.
 6. برای پوشش وسیع‌تر Full Scan، برای عدد قابل دفاع Research Scan و برای جست‌وجوی طولانی Hard Deep Scan را اجرا کنید.
 
-## منوی اصلی
+همه این کارها در رابط وب انجام می‌شود. فهرست زیر منوی ترمینال است که با `cfqoe menu` باز می‌شود و همان امکانات را دارد:
+
+## منوی ترمینال (`cfqoe menu`)
 
 ```text
 1. Quick Scan
@@ -146,7 +150,7 @@ manifest واقعی HLS خوانده می‌شود و `EXT-X-MAP`، `EXT-X-KEY`�
 
 ## Real Load
 
-مرحله Real Load دانلود و آپلود واقعی، latency زیر بار، fan-out، shaping و RPM را اندازه می‌گیرد. سقف دانلود دسکتاپ ۱۲ MiB و Android ۸ MiB است.
+مرحله Real Load دانلود و آپلود واقعی، latency زیر بار، fan-out، shaping و RPM را اندازه می‌گیرد. سقف دانلود دسکتاپ ۱۲ MiB و Android ۸ MiB است. پروفایل گیت پیش‌فرض از نسخه 0.9.0 ‏`tolerant` است (آستانه‌ها بر اساس شواهد میدانی تنظیم شده‌اند تا واریانس عادی پهنای‌باند به‌جای fail، warn بدهد)؛ پروفایل‌های `balanced` و `strict` همچنان قابل انتخاب‌اند. همچنین تلورانس کالیبراسیون concurrency از 0.02 به 0.10 باز شد تا نوسان معمول شبکه اسکن را روی کمترین سطح concurrency قفل نکند.
 
 متریک‌های خروجی شامل `sustainedMbps`، `shapingRatio`، `idleRttMs`، `loadedRttMs`، `rpm`، `jitterMs`، `lossRate`، `fanoutSuccess` و `uplinkMbps` هستند.
 
@@ -176,7 +180,8 @@ results/run-<id>.json           گزارش کامل (schema 10)
 results/latest.json             آخرین گزارش
 results/best-ips.txt            رتبه‌بندی متنی
 results/hard-scan/*             checkpoint، صف retry و partial results
-logs/run-<id>.ndjson            لاگ ساخت‌یافته
+results/debug-bundle-<id>.json  بسته اشکال‌زدایی پاک‌سازی‌شده (از عیب‌یابی)
+logs/run-<id>.ndjson            لاگ ساخت‌یافته — نگهداری: ۲۰ فایل تازه‌تر، حداکثر ۵۰ MiB دسکتاپ / ۲۰ MiB اندروید
 ```
 
 # حریم خصوصی و امنیت
@@ -190,6 +195,9 @@ logs/run-<id>.ndjson            لاگ ساخت‌یافته
 # خط فرمان
 
 ```bash
+cfqoe            رابط وب (پیش‌فرض)
+cfqoe web        رابط وب
+cfqoe menu       منوی ترمینال
 cfqoe quick
 cfqoe scan
 cfqoe research
@@ -197,7 +205,8 @@ cfqoe hard
 cfqoe resume
 cfqoe check
 cfqoe results
-cfqoe diagnose
+cfqoe diagnose             خلاصه یک لاگ اجرا
+cfqoe diagnose --bundle    ساخت بسته اشکال‌زدایی
 npm run xray:install
 npm test
 ```
