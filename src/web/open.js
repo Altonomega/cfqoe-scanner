@@ -26,11 +26,36 @@ export function buildOpenAttempts(platform, url, env = process.env) {
     case "darwin":
       return [{ file: "open", args: [url] }];
     case "android":
-      // Termux: its own opener first, the generic Android intent as
-      // fallback for environments without the Termux API package.
+      // Termux: three genuinely different dispatches. The old list
+      // was one mechanism twice — termux-open-url is itself a thin
+      // `am start` wrapper, so a handler chain that mangled its
+      // delivery mangled the fallback identically (the 0.9.5
+      // auto-open defect: the browser arrived without the session
+      // key). termux-open reaches the browser through the Termux
+      // app's own broadcast receiver instead, and the raw intent is
+      // shaped like a real link tap (BROWSABLE category, NEW_TASK —
+      // the documented requirement for startActivity from a
+      // non-Activity context), with the same explicit user the
+      // Termux script passes.
       return [
         { file: "termux-open-url", args: [url] },
-        { file: "am", args: ["start", "-a", "android.intent.action.VIEW", "-d", url] },
+        { file: "termux-open", args: ["--view", url] },
+        {
+          file: "am",
+          args: [
+            "start",
+            "--user",
+            "0",
+            "-a",
+            "android.intent.action.VIEW",
+            "-c",
+            "android.intent.category.BROWSABLE",
+            "-f",
+            "0x10000000",
+            "-d",
+            url,
+          ],
+        },
       ];
     case "linux": {
       // No display server means no browser to open: stay silent and
@@ -51,6 +76,16 @@ export function buildOpenAttempts(platform, url, env = process.env) {
 // (closing the browser cannot perturb a run, and the scanner never
 // waits on the browser). Resolves true when a handler accepted the
 // URL, false when none did — never rejects.
+//
+// "Accepted" is judged inside a short settle window, because a
+// spawn alone is not a delivery: a handler can spawn and fail
+// immediately (an `am` erroring under its wrapper script, whose
+// output is /dev/null'd — the spawn looked like success and the
+// fallback never ran). A child that exits non-zero before the
+// window closes counts as a failed attempt and the walk falls
+// through; an exit 0, or a child still running when the window
+// closes, keeps the accepted semantics — most handlers daemonize
+// or linger, so a later exit says nothing about delivery.
 export function openInBrowser(url, { platform = process.platform, env = process.env, spawnImpl = spawn } = {}) {
   const attempts = buildOpenAttempts(platform, url, env);
   return new Promise((resolve) => {
@@ -89,9 +124,12 @@ export function openInBrowser(url, { platform = process.platform, env = process.
         }
       };
       child.on("error", () => settle(false));
-      child.on("spawn", () => settle(true));
-      // Some minimal handlers never emit either event under a fake
-      // or exotic spawn; do not hang the caller on them.
+      child.on("exit", (code) => settle(code === 0));
+      // The spawn event alone settles nothing (see the header
+      // comment): the window below decides for a child that is
+      // still running, and covers minimal handlers that never emit
+      // any event under a fake or exotic spawn — do not hang the
+      // caller on them.
       const timer = setTimeout(() => settle(true), 300);
       if (typeof timer.unref === "function") timer.unref();
     };
