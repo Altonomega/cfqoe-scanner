@@ -81,6 +81,38 @@ const AUTH_FAIL_SUMMARY_EVERY = 50;
 const CSP =
   "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'";
 
+// Option B (Shield, 0.9.5): the page a session-less top-level
+// navigation to the shell receives instead of the raw JSON refusal
+// — the page a user stares at when the private link's key never
+// reached the browser, the Android auto-open failure class. One
+// fixed static string: no script, no form, no input, nothing
+// fetched, nothing reflected from the request. It never contains
+// or asks for the token; it only points at the terminal, where
+// the private link is printed.
+const LANDING_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CFQoE Scanner — private link needed</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 34rem; padding: 0 1rem; line-height: 1.55; }
+  h1 { font-size: 1.25rem; }
+</style>
+</head>
+<body>
+<h1>This page needs the scanner's private link</h1>
+<p>The scanner on this device opens only through its private link. The address that brought you here does not carry the session key, so there is nothing to show.</p>
+<p>Go back to the terminal where the scanner is running and open the full private link it printed when it started. Keep that link to yourself — on this device, it is what protects the scanner.</p>
+<div dir="rtl" lang="fa">
+<h1>این صفحه به لینک خصوصی اسکنر نیاز دارد</h1>
+<p>اسکنر روی این دستگاه فقط از طریق لینک خصوصی‌اش باز می‌شود. آدرسی که با آن به این صفحه رسیده‌اید کلید نشست را ندارد، برای همین چیزی برای نمایش داده نمی‌شود.</p>
+<p>به ترمینالی برگردید که اسکنر در آن در حال اجراست و لینک خصوصی کاملی را که هنگام شروع چاپ کرده، در مرورگر باز کنید. آن لینک را با کسی به اشتراک نگذارید؛ روی این دستگاه، همان لینک از اسکنر محافظت می‌کند.</p>
+</div>
+</body>
+</html>
+`;
+
 // The whole static surface: the three code assets plus the bundled
 // Vazirmatn subsets, read once at startup from the resolved public
 // directory. Serving from memory makes the confinement property
@@ -756,6 +788,15 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     // R-03: every route — static and API alike — requires the session.
     if (!sessionFrom(req)) {
       logAuthFail("session", req.method);
+      // Option B: a session-less top-level navigation to the shell
+      // gets the fixed landing page instead of the machine-readable
+      // refusal — same 403, same security headers, no data either
+      // way. Asset and API paths keep the JSON shape exactly.
+      if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
+        applySecurityHeaders(res);
+        res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(LANDING_PAGE);
+      }
       return sendError(res, 403, "forbidden", "Forbidden");
     }
 

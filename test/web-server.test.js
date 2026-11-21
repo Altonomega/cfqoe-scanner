@@ -207,6 +207,53 @@ test("path bootstrap leaves no trace in the logs: neither the key nor attempted 
   }
 });
 
+test("landing page: a session-less navigation to the shell gets the fixed page; assets and API keep the JSON refusal (option B)", async () => {
+  const { layout } = makeLayout();
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const token = new URL(bootstrapUrl).searchParams.get("t");
+    const landing = await rawRequest({ port, path: "/" });
+    assert.equal(landing.status, 403);
+    assert.match(landing.headers["content-type"], /^text\/html/);
+    assert.equal(landing.headers["cache-control"], "no-store");
+    assert.match(landing.headers["content-security-policy"], /default-src 'self'/);
+    assert.equal(landing.headers["x-content-type-options"], "nosniff");
+    // One fixed string that only instructs: no script, no form,
+    // no input, nothing fetched — and never the key.
+    assert.match(landing.body, /private link/);
+    assert.doesNotMatch(landing.body, /<script|<form|<input|<link|http-equiv/i);
+    assert.ok(!landing.body.includes(token), "the page never contains the key");
+    // /index.html is the same navigation and serves the same bytes.
+    const index = await rawRequest({ port, path: "/index.html" });
+    assert.equal(index.status, 403);
+    assert.equal(index.body, landing.body);
+    // Nothing from the request is reflected: a junk query and a
+    // junk agent change nothing.
+    const junk = await rawRequest({
+      port,
+      path: "/?ref=somejunk",
+      headers: { "user-agent": "junk-agent" },
+    });
+    assert.equal(junk.status, 403);
+    assert.equal(junk.body, landing.body);
+    // Asset and API paths keep the machine-readable refusal exactly.
+    for (const requestPath of ["/app.js", "/app.css", "/api/state"]) {
+      const res = await rawRequest({ port, path: requestPath });
+      assert.equal(res.status, 403, requestPath);
+      assert.match(res.headers["content-type"], /^application\/json/);
+      assert.deepEqual(JSON.parse(res.body), { error: "forbidden", message: "Forbidden" });
+    }
+    // With a session the shell itself is served, not the landing.
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const shell = await rawRequest({ port, path: "/", headers: authed(cookie) });
+    assert.equal(shell.status, 200);
+    assert.match(shell.body, /<title>CFQoE Scanner/);
+    assert.notEqual(shell.body, landing.body);
+  } finally {
+    await api.stop("test");
+  }
+});
+
 test("without a session every route class is 403 — static, API, events, mutations (R-03)", async () => {
   const { layout } = makeLayout();
   const { api, port } = await startServer(layout);
