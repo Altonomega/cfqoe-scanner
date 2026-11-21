@@ -281,7 +281,18 @@ function makeHarness({ port, cookie, dropFrame, canned }) {
     atob,
     btoa,
     fetch: fetchImpl,
-    setTimeout,
+    // The app's own timers never hold this process open. Its
+    // longest is cosmetic — the notice auto-hide runs 9 s — and
+    // under Node ≤ 22 the runner waits for the loop to drain
+    // before the file may exit, so a leftover page timer eats the
+    // file's 20 s budget whole (measured: the D5 pair's work ends
+    // at ~1.4 s, the process exits at ~9.4 s; clearing that one
+    // timer drains it at once). The interval wrapper below has
+    // always done the same. Every wait in these tests runs on the
+    // harness's own clock (until/flush), which keeps the loop
+    // alive while a test is awaiting — so an unref'd app timer
+    // still fires exactly when it should.
+    setTimeout: (fn, ms, ...a) => { const t = setTimeout(fn, ms, ...a); t.unref(); return t; },
     clearTimeout,
     setInterval: (fn, ms) => { const t = setInterval(fn, ms); t.unref(); return t; },
     clearInterval,
