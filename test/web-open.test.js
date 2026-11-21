@@ -75,15 +75,30 @@ function fakeSpawn(plan) {
   const spawnImpl = (file, args, options) => {
     calls.push({ file, args, options });
     const child = new EventEmitter();
+    // A real child process is a ref'd handle until it exits, errors,
+    // or is unref'd — and that handle is what keeps the opener's
+    // unref'd settle timer reachable while an attempt is in flight.
+    // A bare EventEmitter has no handle, so on Node ≤22 the test
+    // process drains its loop and exits mid-await, cancelling every
+    // timer-dependent test. Model the handle with a ref'd interval
+    // the child holds until it errors, exits, or is unref'd.
+    const hold = setInterval(() => {}, 1000);
+    const release = () => clearInterval(hold);
     child.unref = () => {
       child.unrefCalled = true;
+      release();
     };
     const behavior = plan[calls.length - 1] ?? "spawn";
     queueMicrotask(() => {
       // "exit<N>" emits the exit event with code N; every other
       // behavior name is emitted as the event itself.
-      if (behavior.startsWith("exit")) child.emit("exit", Number(behavior.slice(4)));
-      else child.emit(behavior);
+      if (behavior.startsWith("exit")) {
+        release();
+        child.emit("exit", Number(behavior.slice(4)));
+      } else {
+        if (behavior === "error") release();
+        child.emit(behavior);
+      }
     });
     return child;
   };
