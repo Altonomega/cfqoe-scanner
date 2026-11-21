@@ -8,7 +8,11 @@
 //      (R-06) — checked before anything else, on every request.
 //   2. The one-time bootstrap exchanges the URL token for an
 //      HttpOnly SameSite=Strict cookie and redirects to a clean URL
-//      (R-04/R-05). Everything else needs the session cookie or the
+//      (R-04/R-05). The key has two spellings of one shared exchange:
+//      the query form (/?t=…) and, for the Android-delivered link,
+//      the path form (/t/<token>) — some intent handler chains lose
+//      the query, the path is the address itself (0.9.5, Shield
+//      C1–C5). Everything else needs the session cookie or the
 //      equivalent header (R-03).
 //   3. Mutations additionally require the custom request header and,
 //      when present, an exact Origin match (R-07). No CORS headers
@@ -49,7 +53,7 @@ import { renderTopList } from "../report.js";
 import { createLogger, summarizeLogFile } from "../logging/logger.js";
 import { createWebState } from "./state.js";
 import { createRunManager } from "./runs.js";
-import { openInBrowser } from "./open.js";
+import { openInBrowser, bootstrapUrlForPlatform } from "./open.js";
 
 export const WEB_PORT = 8797;
 
@@ -76,6 +80,38 @@ const AUTH_FAIL_VERBATIM = 20; // Shield §4 flood guard
 const AUTH_FAIL_SUMMARY_EVERY = 50;
 const CSP =
   "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'";
+
+// Option B (Shield, 0.9.5): the page a session-less top-level
+// navigation to the shell receives instead of the raw JSON refusal
+// — the page a user stares at when the private link's key never
+// reached the browser, the Android auto-open failure class. One
+// fixed static string: no script, no form, no input, nothing
+// fetched, nothing reflected from the request. It never contains
+// or asks for the token; it only points at the terminal, where
+// the private link is printed.
+const LANDING_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CFQoE Scanner — private link needed</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 34rem; padding: 0 1rem; line-height: 1.55; }
+  h1 { font-size: 1.25rem; }
+</style>
+</head>
+<body>
+<h1>This page needs the scanner's private link</h1>
+<p>The scanner on this device opens only through its private link. The address that brought you here does not carry the session key, so there is nothing to show.</p>
+<p>Go back to the terminal where the scanner is running and open the full private link it printed when it started. Keep that link to yourself — on this device, it is what protects the scanner.</p>
+<div dir="rtl" lang="fa">
+<h1>این صفحه به لینک خصوصی اسکنر نیاز دارد</h1>
+<p>اسکنر روی این دستگاه فقط از طریق لینک خصوصی‌اش باز می‌شود. آدرسی که با آن به این صفحه رسیده‌اید کلید نشست را ندارد، برای همین چیزی برای نمایش داده نمی‌شود.</p>
+<p>به ترمینالی برگردید که اسکنر در آن در حال اجراست و لینک خصوصی کاملی را که هنگام شروع چاپ کرده، در مرورگر باز کنید. آن لینک را با کسی به اشتراک نگذارید؛ روی این دستگاه، همان لینک از اسکنر محافظت می‌کند.</p>
+</div>
+</body>
+</html>
+`;
 
 // The whole static surface: the three code assets plus the bundled
 // Vazirmatn subsets, read once at startup from the resolved public
@@ -693,6 +729,25 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     ["GET", /^\/api\/logs\/([^/]+)\/summary$/, (req, res, match) => handleLogSummary(req, res, match[1])],
   ];
 
+  // R-04/R-05: the one-time bootstrap exchange — one token, one
+  // comparison, one cookie, one shared failure counter, whichever
+  // spelling carried the key (Shield C1). The token never appears
+  // in a response again: the 302 target is the clean URL and the
+  // body is empty.
+  function exchangeBootstrap(req, res, candidate) {
+    if (safeEqual(candidate, token)) {
+      webLog.info("web.auth.bootstrap", {});
+      applySecurityHeaders(res);
+      res.writeHead(302, {
+        Location: "/",
+        "Set-Cookie": `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`,
+      });
+      return res.end();
+    }
+    logAuthFail("session", req.method);
+    return sendError(res, 403, "forbidden", "Forbidden");
+  }
+
   async function dispatch(req, res) {
     const url = new URL(req.url, "http://127.0.0.1");
     const pathname = url.pathname;
@@ -705,21 +760,22 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       return sendError(res, 403, "forbidden", "Forbidden");
     }
 
-    // R-04/R-05: the one-time bootstrap. A correct token in the query
-    // is exchanged for the session cookie and a 302 to the clean URL;
-    // the token never appears in a response again.
+    // The query spelling of the bootstrap: a correct token in the
+    // query is exchanged for the session cookie.
     if (req.method === "GET" && pathname === "/" && url.searchParams.has("t")) {
-      if (safeEqual(url.searchParams.get("t"), token)) {
-        webLog.info("web.auth.bootstrap", {});
-        applySecurityHeaders(res);
-        res.writeHead(302, {
-          Location: "/",
-          "Set-Cookie": `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`,
-        });
-        return res.end();
-      }
-      logAuthFail("session", req.method);
-      return sendError(res, 403, "forbidden", "Forbidden");
+      return exchangeBootstrap(req, res, url.searchParams.get("t"));
+    }
+
+    // The path spelling, delivered only to the Android opener
+    // (Shield C2, C5): the raw segment is compared as-is — no
+    // decoding step exists, so an encoded or malformed segment
+    // simply fails the comparison. The route serves nothing; it
+    // only performs the same exchange. Every other /t/ shape
+    // (missing segment, extra segments, trailing slash) is not
+    // this route and falls through to the unknown-route refusal.
+    const pathKey = req.method === "GET" ? /^\/t\/([^/]+)$/.exec(pathname) : null;
+    if (pathKey) {
+      return exchangeBootstrap(req, res, pathKey[1]);
     }
 
     const isApi = pathname.startsWith("/api/");
@@ -732,6 +788,15 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     // R-03: every route — static and API alike — requires the session.
     if (!sessionFrom(req)) {
       logAuthFail("session", req.method);
+      // Option B: a session-less top-level navigation to the shell
+      // gets the fixed landing page instead of the machine-readable
+      // refusal — same 403, same security headers, no data either
+      // way. Asset and API paths keep the JSON shape exactly.
+      if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
+        applySecurityHeaders(res);
+        res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(LANDING_PAGE);
+      }
       return sendError(res, 403, "forbidden", "Forbidden");
     }
 
@@ -836,8 +901,16 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     webLog.info("web.start", { port: boundPort, bind: BIND_HOST });
     const url = `http://${BIND_HOST}:${boundPort}/`;
     const bootstrapUrl = `${url}?t=${token}`;
-    if (openBrowser) await openInBrowser(bootstrapUrl);
-    return { port: boundPort, url, bootstrapUrl };
+    // The path spelling of the same key, returned for the Android
+    // opener only (Shield C5): it is never printed and never
+    // logged — the printed link stays the query form everywhere.
+    const bootstrapPathUrl = `${url}t/${token}`;
+    if (openBrowser) {
+      await openInBrowser(
+        bootstrapUrlForPlatform(process.platform, { bootstrapUrl, bootstrapPathUrl }),
+      );
+    }
+    return { port: boundPort, url, bootstrapUrl, bootstrapPathUrl };
   }
 
   async function stop(reason = "shutdown") {
