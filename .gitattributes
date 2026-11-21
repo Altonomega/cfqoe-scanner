@@ -1,0 +1,14 @@
+# Line-ending contract: text sources are stored as LF and checked out
+# as LF on every platform. A cloner's core.autocrlf must never rewrite
+# them — on Windows CI an autocrlf checkout inflated the web assets
+# (src/web/public/) by one byte per line, 172,022 -> 174,237 bytes,
+# and blew the size ratchet in test/web-assets.test.js even though the
+# committed bytes were unchanged.
+* text=auto eol=lf
+
+# Bundled fonts are binary data, never text.
+*.woff2 binary
+
+# The Windows launcher is consumed by cmd.exe; its working-tree form
+# stays CRLF (its stored form is LF like everything else).
+*.cmd text eol=crlf
