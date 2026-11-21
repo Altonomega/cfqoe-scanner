@@ -71,6 +71,19 @@ export function buildOpenAttempts(platform, url, env = process.env) {
   }
 }
 
+// The bootstrap link spells the same session key two ways: the
+// query form (/?t=…) and the path form (/t/<key>). The path form
+// exists only for the Android opener — some VIEW-intent handler
+// chains drop or rewrite the query, and the key with it, while the
+// path is the address itself and survives the same hops (0.9.5,
+// Shield C5). Every printed link and every other platform keeps
+// the query form; the path form is never printed or logged. The
+// keying lives here so every openInBrowser call site selects the
+// same way.
+export function bootstrapUrlForPlatform(platform, session) {
+  return platform === "android" ? session.bootstrapPathUrl : session.bootstrapUrl;
+}
+
 // Try each attempt detached with stdio ignored and unref'd, so the
 // browser's lifetime is fully decoupled from the scanner process
 // (closing the browser cannot perturb a run, and the scanner never

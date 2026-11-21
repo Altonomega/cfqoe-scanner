@@ -8,7 +8,11 @@
 //      (R-06) — checked before anything else, on every request.
 //   2. The one-time bootstrap exchanges the URL token for an
 //      HttpOnly SameSite=Strict cookie and redirects to a clean URL
-//      (R-04/R-05). Everything else needs the session cookie or the
+//      (R-04/R-05). The key has two spellings of one shared exchange:
+//      the query form (/?t=…) and, for the Android-delivered link,
+//      the path form (/t/<token>) — some intent handler chains lose
+//      the query, the path is the address itself (0.9.5, Shield
+//      C1–C5). Everything else needs the session cookie or the
 //      equivalent header (R-03).
 //   3. Mutations additionally require the custom request header and,
 //      when present, an exact Origin match (R-07). No CORS headers
@@ -49,7 +53,7 @@ import { renderTopList } from "../report.js";
 import { createLogger, summarizeLogFile } from "../logging/logger.js";
 import { createWebState } from "./state.js";
 import { createRunManager } from "./runs.js";
-import { openInBrowser } from "./open.js";
+import { openInBrowser, bootstrapUrlForPlatform } from "./open.js";
 
 export const WEB_PORT = 8797;
 
@@ -693,6 +697,25 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     ["GET", /^\/api\/logs\/([^/]+)\/summary$/, (req, res, match) => handleLogSummary(req, res, match[1])],
   ];
 
+  // R-04/R-05: the one-time bootstrap exchange — one token, one
+  // comparison, one cookie, one shared failure counter, whichever
+  // spelling carried the key (Shield C1). The token never appears
+  // in a response again: the 302 target is the clean URL and the
+  // body is empty.
+  function exchangeBootstrap(req, res, candidate) {
+    if (safeEqual(candidate, token)) {
+      webLog.info("web.auth.bootstrap", {});
+      applySecurityHeaders(res);
+      res.writeHead(302, {
+        Location: "/",
+        "Set-Cookie": `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`,
+      });
+      return res.end();
+    }
+    logAuthFail("session", req.method);
+    return sendError(res, 403, "forbidden", "Forbidden");
+  }
+
   async function dispatch(req, res) {
     const url = new URL(req.url, "http://127.0.0.1");
     const pathname = url.pathname;
@@ -705,21 +728,22 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       return sendError(res, 403, "forbidden", "Forbidden");
     }
 
-    // R-04/R-05: the one-time bootstrap. A correct token in the query
-    // is exchanged for the session cookie and a 302 to the clean URL;
-    // the token never appears in a response again.
+    // The query spelling of the bootstrap: a correct token in the
+    // query is exchanged for the session cookie.
     if (req.method === "GET" && pathname === "/" && url.searchParams.has("t")) {
-      if (safeEqual(url.searchParams.get("t"), token)) {
-        webLog.info("web.auth.bootstrap", {});
-        applySecurityHeaders(res);
-        res.writeHead(302, {
-          Location: "/",
-          "Set-Cookie": `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`,
-        });
-        return res.end();
-      }
-      logAuthFail("session", req.method);
-      return sendError(res, 403, "forbidden", "Forbidden");
+      return exchangeBootstrap(req, res, url.searchParams.get("t"));
+    }
+
+    // The path spelling, delivered only to the Android opener
+    // (Shield C2, C5): the raw segment is compared as-is — no
+    // decoding step exists, so an encoded or malformed segment
+    // simply fails the comparison. The route serves nothing; it
+    // only performs the same exchange. Every other /t/ shape
+    // (missing segment, extra segments, trailing slash) is not
+    // this route and falls through to the unknown-route refusal.
+    const pathKey = req.method === "GET" ? /^\/t\/([^/]+)$/.exec(pathname) : null;
+    if (pathKey) {
+      return exchangeBootstrap(req, res, pathKey[1]);
     }
 
     const isApi = pathname.startsWith("/api/");
@@ -836,8 +860,16 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     webLog.info("web.start", { port: boundPort, bind: BIND_HOST });
     const url = `http://${BIND_HOST}:${boundPort}/`;
     const bootstrapUrl = `${url}?t=${token}`;
-    if (openBrowser) await openInBrowser(bootstrapUrl);
-    return { port: boundPort, url, bootstrapUrl };
+    // The path spelling of the same key, returned for the Android
+    // opener only (Shield C5): it is never printed and never
+    // logged — the printed link stays the query form everywhere.
+    const bootstrapPathUrl = `${url}t/${token}`;
+    if (openBrowser) {
+      await openInBrowser(
+        bootstrapUrlForPlatform(process.platform, { bootstrapUrl, bootstrapPathUrl }),
+      );
+    }
+    return { port: boundPort, url, bootstrapUrl, bootstrapPathUrl };
   }
 
   async function stop(reason = "shutdown") {

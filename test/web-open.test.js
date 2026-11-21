@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { buildOpenAttempts, openInBrowser } from "../src/web/open.js";
+import { buildOpenAttempts, bootstrapUrlForPlatform, openInBrowser } from "../src/web/open.js";
 
 const URL = "http://127.0.0.1:8797/?t=TOKEN";
 
@@ -57,6 +57,17 @@ test("android/Termux: three diverse dispatches — termux-open-url, termux-open,
 
 test("unknown platforms get no attempts", () => {
   assert.deepEqual(buildOpenAttempts("freebsd", URL, {}), []);
+});
+
+test("bootstrapUrlForPlatform: only the Android opener receives the path spelling (Shield C5)", () => {
+  const session = {
+    bootstrapUrl: "http://127.0.0.1:8797/?t=TOKEN",
+    bootstrapPathUrl: "http://127.0.0.1:8797/t/TOKEN",
+  };
+  assert.equal(bootstrapUrlForPlatform("android", session), session.bootstrapPathUrl);
+  for (const platform of ["win32", "darwin", "linux", "freebsd"]) {
+    assert.equal(bootstrapUrlForPlatform(platform, session), session.bootstrapUrl, platform);
+  }
 });
 
 function fakeSpawn(plan) {
