@@ -504,8 +504,20 @@ test("D6a: a lost terminal frame cannot freeze the banner — the watchdog resyn
       "with the terminal frame lost, the client still believes the run is live (the defect)");
     assert.equal(h.el("#run-banner").hidden, false, "the banner still shows the run");
     // …and then, with no refresh and no view change, the watchdog
-    // must fetch the truth and put the banner away by itself.
-    await until(() => h.eval("app.runStatus") === "complete" && h.el("#run-banner").hidden === true, 40000,
+    // must fetch the truth and put the banner away by itself. The
+    // watchdog's only clock input is the event-contact stamp, so
+    // the rig declares the silence the lost frame left behind —
+    // last contact 16 s ago, past the shipped 15 s threshold —
+    // instead of idling in real time: on slow CI runners the real
+    // wait pushed this test over the suite's 20 s per-test timeout
+    // (17.5 s locally, of which ~15.5 s was the silence itself).
+    // Everything under test still runs exactly as shipped: the
+    // real 1 s chrome interval notices the silence, calls the real
+    // resync (real HTTP /api/state), and the real snapshot path
+    // applies the terminal state — with the frame still dropped,
+    // no navigation, and no other path able to flip the status.
+    h.eval("app._lastEventAt = Date.now() - 16000");
+    await until(() => h.eval("app.runStatus") === "complete" && h.el("#run-banner").hidden === true, 15000,
       "watchdog to resync the terminal state and hide the banner");
   } finally {
     await server.stop();
