@@ -106,6 +106,22 @@ test('defect 8 pin: the plate label reads the catalog cidr, never firstBlock as 
   assert.ok(!js.includes('firstBlock.split'), 'firstBlock (a numeric index) is never split as a string');
 });
 
+test('0.9.6 pins: the fragment exchange and the locked plate live in the one shell (Shield A4, B as amended)', () => {
+  const js = read('app.js');
+  // The boot offers the fragment key to the exchange endpoint and
+  // scrubs the address bar to "/" afterwards, success or failure.
+  assert.ok(js.includes('"/api/bootstrap"'), 'the boot posts the fragment key to the exchange');
+  assert.ok(js.includes('history.replaceState(null, "", "/")'), 'the fragment is scrubbed to / after the attempt');
+  // The locked plate carries option B's shipped bilingual copy —
+  // fixed strings, and the render contains no form and no field:
+  // the link is opened in the browser, never typed into the page.
+  assert.ok(js.includes("This page needs the scanner's private link"), 'locked plate, EN copy');
+  assert.ok(js.includes('این صفحه به لینک خصوصی اسکنر نیاز دارد'), 'locked plate, FA copy');
+  const locked = js.slice(js.indexOf('function renderLocked'), js.indexOf('function enterLocked'));
+  assert.ok(locked.length > 0, 'the locked render exists');
+  assert.ok(!/<form|<input|contenteditable/i.test(locked), 'the locked render has no form and no field');
+});
+
 test('defect 10 pin: the helix is drawn phase-shifted, never transform-squashed', () => {
   const js = read('app.js'), css = read('app.css');
   assert.ok(!css.includes('helixbreath'), 'the scaleY breath keyframes are gone');
@@ -123,7 +139,12 @@ test('size ratchet: the three assets stay a localhost-instant payload', () => {
   // pass) raised it one deliberate 8 KB step to 168 KB — after the
   // duplicated inline-results bodies were factored into one factory
   // and the dead .rail-h/.plate-wrap/.mini-plate rules were removed.
-  assert.ok(total <= 168 * 1024, 'total ' + total + ' bytes exceeds the 168 KB ratchet');
+  // 0.9.6 raises it one more deliberate 8 KB step to 176 KB: the
+  // fragment bootstrap (boot exchange + state-status read) and the
+  // locked plate, which now carries option B's bilingual copy in
+  // the shell — the server's landing page is gone, so the words
+  // live here exactly once.
+  assert.ok(total <= 176 * 1024, 'total ' + total + ' bytes exceeds the 176 KB ratchet');
 });
 
 test('D9: the eleven plate states have pairwise-distinct legend swatches in both themes', () => {
