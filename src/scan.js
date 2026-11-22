@@ -83,8 +83,10 @@ export async function runScan({
   const target = describeVless(vless),
     seed = randomInt(0, 4294967296);
   let effectiveSettings = { ...settings, scan: { ...settings.scan, seed } };
-  // Calibration probes the path before the scan starts (up to ~80 s of
-  // probing); announce it, or the run opens with a silent minute.
+  // Calibration probes the path before the scan starts (bounded by
+  // the batched control hunt, ~24 s of probing on a blackhole path at
+  // the default timeout, plus the ladder); announce it, or the run
+  // opens with silent dead time.
   emitProgress({ phase: "calibrating", completed: 0, total: 1 });
   const ranges = parseRangeList(fs.readFileSync(layout.rangesFile, "utf8")),
     candidates = sampleCandidates({
