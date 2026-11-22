@@ -31,7 +31,9 @@ import { fileURLToPath } from "node:url";
 import {
   loadSettings,
   saveSettings,
+  mergeSettings,
   migrateSettings,
+  validateSettings,
   loadCatalog,
   estimateTrafficBytes,
   DEFAULT_SETTINGS,
@@ -328,14 +330,45 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     sendJson(res, 200, { settings: loadSettings(layout.settingsFile), catalog: workloadsCatalog() });
   }
 
+  // The refusal every settings write path shares: the same error
+  // code and sentence the settings view itself uses when it refuses
+  // a save, with the offending field names — names only, never
+  // values (Shield §4). One invalid field refuses the whole save:
+  // nothing is persisted, so a bad sibling cannot ride in on a good
+  // one and a good edit cannot persist alongside a refused one.
+  function refuseInvalidSettings(res, action, invalidFields) {
+    const fields = invalidFields.slice(0, 100);
+    webLog.warn("web.control.reject", { action, reason: "invalid_fields", fields });
+    return sendError(
+      res,
+      400,
+      "invalid_settings",
+      `Nothing saved — these fields have invalid values: ${fields.join(", ")}.`,
+      { fields },
+    );
+  }
+
   async function handleSettingsSave(req, res) {
     const body = await readJsonBody(req, BODY_CAP_SETTINGS);
     if (!isPlainObject(body.settings)) {
       webLog.warn("web.control.reject", { action: "settings-save", reason: "invalid_settings" });
       return sendError(res, 400, "invalid_settings", "Settings must be a JSON object.");
     }
-    const next = migrateSettings(body.settings);
+    // The server validates on its own: the view's client-side checks
+    // are a courtesy, not a boundary — a raw POST used to persist
+    // type-invalid values verbatim (mergeSettings copies overrides
+    // unchecked), and a non-object section crashed migration into a
+    // 500. Validation runs on the offered object, before migration
+    // ever sees it (validateSettings is the schema walk).
+    const invalidFields = validateSettings(body.settings);
+    if (invalidFields.length > 0) return refuseInvalidSettings(res, "settings-save", invalidFields);
+    // A save merges over the STORED settings, not over the defaults:
+    // a partial POST touches only what it names, and untouched
+    // sections keep their stored values. (Resetting to defaults is
+    // the defaults endpoint's explicit job, not a save side effect.)
+    // Migration still normalizes the merged result, as before.
     const previous = loadSettings(layout.settingsFile);
+    const next = migrateSettings(mergeSettings(previous, body.settings));
     const changed = changedKeyNames(previous, next).slice(0, 100);
     saveSettings(layout.settingsFile, next);
     webLog.info("web.control.settings-save", { changedKeys: changed });
@@ -344,6 +377,14 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
 
   async function handleSettingsEstimate(req, res) {
     const body = await readJsonBody(req, BODY_CAP_SETTINGS);
+    // Same validation as the save path: the estimator runs the same
+    // migration over the offered object, so it shared the same
+    // invalid-shape hole (a null section was a 500 here too). It
+    // persists nothing, so the refusal is the only effect.
+    if (isPlainObject(body.settings)) {
+      const invalidFields = validateSettings(body.settings);
+      if (invalidFields.length > 0) return refuseInvalidSettings(res, "settings-estimate", invalidFields);
+    }
     const source = isPlainObject(body.settings)
       ? migrateSettings(body.settings)
       : loadSettings(layout.settingsFile);
