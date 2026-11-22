@@ -984,11 +984,12 @@ test("calibration hunt: SSE counters frames and the snapshot carry hunt:true dur
   // Calibration stays ENABLED — the opposite of the lifecycle tests.
   // Every candidate is a blackhole, so the control hunt walks its
   // whole pool (quick samples 16 candidates; the ladder never runs
-  // without a working control), each probe burning the shortened
-  // timeout: the hunt alone lasts ~6 s, long enough for several
-  // 1 Hz counters flushes to carry it.
+  // without a working control). The hunt probes in batches of 8, so
+  // the pool costs ⌈16 / 8⌉ = 2 rounds of the probe timeout; the
+  // timeout is set to 3 s so the hunt alone lasts ~6 s, long enough
+  // for several 1 Hz counters flushes to carry it.
   const testSettings = loadSettings(layout.settingsFile);
-  testSettings.scan.timeoutMs = 400;
+  testSettings.scan.timeoutMs = 3000;
   saveSettings(layout.settingsFile, testSettings);
   const { api, port, bootstrapUrl } = await startServer(layout);
   const events = [];
