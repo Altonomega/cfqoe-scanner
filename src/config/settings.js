@@ -318,6 +318,126 @@ export function migrateSettings(input, platform = process.platform) {
   merged.migratedFrom = version;
   return merged;
 }
+// The settings schema the web save path enforces (validateSettings).
+// There is no second table to drift: the field set, the structure and
+// the leaf types are derived from createDefaultSettings() itself, so
+// a key added to the defaults is validated by the same walk that
+// migrates it. Only the rules the defaults cannot express are
+// declared, here, once:
+//   - SETTINGS_ENUM_PATHS: string leaves whose value must come from a
+//     fixed set — the sets the product's own writers already enforce
+//     (the CLI refuses any other --gate-profile; the logger's LEVELS;
+//     the streaming probe's variant modes, including the legacy "abr"
+//     it still reads as "lowest"; the hard engine names).
+//   - SETTINGS_NON_POSITIVE_PATHS: numeric leaves the settings UI
+//     marks pos:false, where any finite value is acceptable. Every
+//     other numeric leaf must be > 0 — the UI's own rule.
+const SETTINGS_ENUM_PATHS = {
+    "logging.level": ["debug", "info", "warn", "error"],
+    "load.gateProfile": ["balanced", "strict", "tolerant"],
+    "streaming.variantMode": ["fixed", "lowest", "adaptive", "abr"],
+    "hard.engine": ["blocks", "round-robin"],
+  },
+  SETTINGS_NON_POSITIVE_PATHS = new Set(["scan.seed"]);
+// Validate a settings object offered for saving against the defaults
+// tree. Returns the dotted paths of every invalid field (empty when
+// valid). Only the fields actually present are checked — a partial
+// update names what it touches — but any field it does name must be
+// exactly the shape the defaults declare: a section whose default is
+// an object must be an object, a leaf must carry the default's type,
+// numbers must be finite (and positive, per above), enum leaves must
+// hold a known value, and a key the defaults do not know is invalid
+// rather than silently persisted (mergeSettings would otherwise copy
+// it verbatim into the stored file). This runs BEFORE migrateSettings
+// on purpose: migration assumes the shape — a null section crashes
+// its removed-key strip with a TypeError — so shape is judged here,
+// on the input as offered, never on the migrated result.
+export function validateSettings(input, platform = process.platform) {
+  if (!isPlainObject(input)) return ["(root)"];
+  const defaults = createDefaultSettings(platform),
+    invalid = [];
+  const checkLeaf = (value, schemaValue, fieldPath) => {
+    if (typeof schemaValue === "number") {
+      if (typeof value !== "number" || !Number.isFinite(value))
+        invalid.push(fieldPath);
+      else if (!SETTINGS_NON_POSITIVE_PATHS.has(fieldPath) && value <= 0)
+        invalid.push(fieldPath);
+      return;
+    }
+    if (typeof schemaValue === "boolean") {
+      if (typeof value !== "boolean") invalid.push(fieldPath);
+      return;
+    }
+    if (typeof schemaValue === "string") {
+      if (typeof value !== "string") {
+        invalid.push(fieldPath);
+        return;
+      }
+      const allowed = SETTINGS_ENUM_PATHS[fieldPath];
+      if (allowed && !allowed.includes(value)) invalid.push(fieldPath);
+      return;
+    }
+    if (Array.isArray(schemaValue)) {
+      if (!Array.isArray(value)) {
+        invalid.push(fieldPath);
+        return;
+      }
+      if (schemaValue.length === 0) {
+        // customWorkloads lists: the entries are workload objects.
+        // Their inner shape is the workloads contract, not the
+        // settings schema — the type line drawn here is
+        // object-or-refuse.
+        if (!value.every((entry) => isPlainObject(entry)))
+          invalid.push(fieldPath);
+        return;
+      }
+      const element = schemaValue[0];
+      if (typeof element === "number") {
+        // The settings UI's list rule: a non-empty list of finite
+        // numbers (calibration.levels is the one such field).
+        if (
+          value.length === 0 ||
+          !value.every((v) => typeof v === "number" && Number.isFinite(v))
+        )
+          invalid.push(fieldPath);
+      } else if (
+        typeof element === "string" &&
+        !value.every((v) => typeof v === "string")
+      )
+        invalid.push(fieldPath);
+      return;
+    }
+    // An empty defaults object is a free-form leaf: load.gates is
+    // engine-shaped data with no per-key schema anywhere in the
+    // product, so the line drawn is object-or-refuse.
+    if (!isPlainObject(value)) invalid.push(fieldPath);
+  };
+  const walk = (provided, schema, prefix) => {
+    for (const [key, value] of Object.entries(provided)) {
+      const fieldPath = prefix ? `${prefix}.${key}` : key;
+      if (!Object.prototype.hasOwnProperty.call(schema, key)) {
+        // migratedFrom is written by migrateSettings itself into
+        // stored files and rides the read → save round-trip; it is
+        // server metadata, not a user field. A numeric one is valid.
+        if (
+          fieldPath === "migratedFrom" &&
+          typeof value === "number" &&
+          Number.isFinite(value)
+        )
+          continue;
+        invalid.push(fieldPath);
+        continue;
+      }
+      const schemaValue = schema[key];
+      if (isPlainObject(schemaValue) && Object.keys(schemaValue).length > 0) {
+        if (!isPlainObject(value)) invalid.push(fieldPath);
+        else walk(value, schemaValue, fieldPath);
+      } else checkLeaf(value, schemaValue, fieldPath);
+    }
+  };
+  walk(input, defaults, "");
+  return invalid;
+}
 // The fallback settings must be an isolated deep copy: mergeSettings
 // is a shallow merge, so returning it over DEFAULT_SETTINGS would
 // hand every caller the defaults' own nested objects — one caller's
