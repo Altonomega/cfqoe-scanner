@@ -651,6 +651,130 @@ test("settings: a no-op PUT leaves the file byte-identical; edits round-trip; de
   }
 });
 
+test("settings save: the server validates on its own — invalid fields refuse the whole save and persist nothing", async () => {
+  const { layout } = makeLayout();
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const get = async () =>
+      JSON.parse((await rawRequest({ port, path: "/api/settings", headers: authed(cookie) })).body);
+    const put = async (settings) =>
+      rawRequest({
+        port,
+        method: "POST",
+        path: "/api/settings",
+        headers: mutation(cookie),
+        body: JSON.stringify({ settings }),
+      });
+
+    // A known-good stored state to compare against.
+    const first = await get();
+    assert.equal((await put(first.settings)).status, 200);
+    const bytesBefore = fs.readFileSync(layout.settingsFile);
+
+    const expectRefused = async (settings, field) => {
+      const res = await put(settings);
+      assert.equal(res.status, 400, `${field}: ${res.body}`);
+      const body = JSON.parse(res.body);
+      assert.equal(body.error, "invalid_settings");
+      assert.ok(Array.isArray(body.fields) && body.fields.includes(field), `fields names ${field}: ${res.body}`);
+      assert.ok(body.message.includes(field), "the message the view shows names the field");
+      assert.deepEqual(fs.readFileSync(layout.settingsFile), bytesBefore, "a refused save persists nothing");
+    };
+
+    // Type-invalid leaves (Proof's live repro classes, one at a
+    // time): numbers as strings, a boolean as a string, bad enum
+    // values, an out-of-range number, a list as a string, an
+    // unknown key the old merge copied verbatim into the file.
+    await expectRefused({ scan: { concurrency: "banana", timeoutMs: "fast" } }, "scan.concurrency");
+    await expectRefused({ verification: { sprt: { alpha: "high" } } }, "verification.sprt.alpha");
+    await expectRefused({ hard: { budgetProbes: "lots" } }, "hard.budgetProbes");
+    await expectRefused({ verification: { enabled: "true" } }, "verification.enabled");
+    await expectRefused({ streaming: { variantMode: "sideways" } }, "streaming.variantMode");
+    await expectRefused({ logging: { level: "chatty" } }, "logging.level");
+    await expectRefused({ scan: { concurrency: -2 } }, "scan.concurrency");
+    await expectRefused({ calibration: { levels: "1,2,4" } }, "calibration.levels");
+    await expectRefused({ scan: { nope: 1 } }, "scan.nope");
+    // A non-object section used to crash migration into a 500; it
+    // is a clean 400 now, and the server answers normally after it.
+    await expectRefused({ scan: null }, "scan");
+    await expectRefused({ load: "everything" }, "load");
+    assert.equal((await rawRequest({ port, path: "/api/settings", headers: authed(cookie) })).status, 200);
+
+    // One invalid field refuses the WHOLE save: the valid sibling
+    // edit in the same body must not persist either.
+    const mixed = structuredClone(first.settings);
+    mixed.scan.timeoutMs = 6100;
+    mixed.tunnel.limit = "five";
+    const mixedRes = await put(mixed);
+    assert.equal(mixedRes.status, 400);
+    assert.deepEqual(fs.readFileSync(layout.settingsFile), bytesBefore, "no partial persist of the valid sibling");
+    assert.equal((await get()).settings.scan.timeoutMs, first.settings.scan.timeoutMs);
+
+    // The estimate path shares the validation — it runs the same
+    // migration over the offered object (a null section was a 500
+    // there too) and persists nothing, so refusal is its only
+    // effect; a valid estimate still answers.
+    const estimate = async (settings) =>
+      rawRequest({
+        port,
+        method: "POST",
+        path: "/api/settings/estimate",
+        headers: mutation(cookie),
+        body: JSON.stringify({ settings }),
+      });
+    const badEstimate = await estimate({ scan: null });
+    assert.equal(badEstimate.status, 400);
+    assert.equal(JSON.parse(badEstimate.body).error, "invalid_settings");
+    assert.equal((await estimate({ scan: { timeoutMs: "fast" } })).status, 400);
+    assert.equal((await estimate({ scan: { timeoutMs: 6000 } })).status, 200);
+    assert.deepEqual(fs.readFileSync(layout.settingsFile), bytesBefore, "estimates never persist");
+  } finally {
+    await api.stop("test");
+  }
+});
+
+test("settings save: a partial POST merges over the stored settings — untouched sections survive", async () => {
+  const { layout } = makeLayout();
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    const get = async () =>
+      JSON.parse((await rawRequest({ port, path: "/api/settings", headers: authed(cookie) })).body);
+    const put = async (settings) =>
+      rawRequest({
+        port,
+        method: "POST",
+        path: "/api/settings",
+        headers: mutation(cookie),
+        body: JSON.stringify({ settings }),
+      });
+
+    assert.equal((await put({ hard: { budgetProbes: 12345 } })).status, 200);
+    const storedHard = (await get()).settings.hard;
+    assert.equal(storedHard.budgetProbes, 12345);
+
+    // Proof's driver shape: a later partial save naming only scan
+    // must not reset hard (or anything else) back to defaults — the
+    // old handler merged the body over createDefaultSettings().
+    assert.equal((await put({ version: 7, scan: { concurrency: 7 } })).status, 200);
+    const after = await get();
+    assert.equal(after.settings.scan.concurrency, 7);
+    assert.deepEqual(after.settings.hard, storedHard, "the untouched hard section survives a partial save");
+    const onDisk = loadSettings(layout.settingsFile);
+    assert.equal(onDisk.hard.budgetProbes, 12345);
+    assert.equal(onDisk.scan.concurrency, 7);
+
+    // The product's own edge values still save: seed is the view's
+    // one pos:false numeric field (any finite value), and the
+    // terminal's variant mode is a real value, not an error.
+    assert.equal((await put({ scan: { seed: 0 } })).status, 200);
+    assert.equal((await put({ streaming: { variantMode: "lowest" } })).status, 200);
+  } finally {
+    await api.stop("test");
+  }
+});
+
 test("settings estimate answers from the same estimator the settings view uses", async () => {
   const { layout } = makeLayout();
   const { api, port, bootstrapUrl } = await startServer(layout);
