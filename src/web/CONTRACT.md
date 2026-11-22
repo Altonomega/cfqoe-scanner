@@ -89,3 +89,22 @@ W3 should implement them as written or renegotiate here, in writing:
      names, system rows, report metadata) are rendered as text,
      never as links; downloads flow only through the authenticated
      `/api/reports/:runId/...` endpoints above.
+
+10. **Fragment bootstrap (0.9.6, renegotiates the preamble's
+    "client never touches a token").** The shell and its six assets
+    are served without a session; all data stays behind the session
+    on `/api/*`. When the shell was delivered by the Android opener
+    its URL fragment carries the session key: the client reads it
+    once at boot, opaquely (never rendered, stored, or placed in a
+    URL), POSTs it as the candidate to `/api/bootstrap`
+    (`X-CFQoE-Request: 1`, `{ key }`), and scrubs the fragment via
+    `history.replaceState` to `/` whether the exchange took it or
+    not. The exchange is believed only when a following
+    `GET /api/state` returns 200 on the cookie. With no session the
+    shell renders the locked state — option B's bilingual copy,
+    fixed strings, no form or key field — and the server records
+    one `web.open.diagnose` line per case class per run
+    (`cookie_lost` / `key_rejected` / `no_key_yet`), inferred from
+    server-side observations only. The query spelling (printed
+    links, desktop openers) is unchanged; the 0.9.5 `/t/` spelling
+    is retired. (Shield option A, A1–A8 + D1–D4.)

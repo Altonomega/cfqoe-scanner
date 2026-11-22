@@ -7,13 +7,17 @@
 //   1. Host must be the literal loopback authority the server bound
 //      (R-06) — checked before anything else, on every request.
 //   2. The one-time bootstrap exchanges the URL token for an
-//      HttpOnly SameSite=Strict cookie and redirects to a clean URL
-//      (R-04/R-05). The key has two spellings of one shared exchange:
-//      the query form (/?t=…) and, for the Android-delivered link,
-//      the path form (/t/<token>) — some intent handler chains lose
-//      the query, the path is the address itself (0.9.5, Shield
-//      C1–C5). Everything else needs the session cookie or the
-//      equivalent header (R-03).
+//      HttpOnly SameSite=Strict cookie (R-04/R-05). The key has two
+//      spellings of one shared exchange: the query form (/?t=…,
+//      printed and used on desktop platforms), which redirects to a
+//      clean URL, and the fragment form (/#<key>), delivered only
+//      to the Android opener — the intent handler chain on Mahan's
+//      handset stripped the key from the query (0.9.4) and from the
+//      path (0.9.5's /t/ spelling, retired here), while a fragment
+//      is read locally by the shell and POSTed to /api/bootstrap
+//      (0.9.6, Shield option A). The shell and its assets are
+//      public — they carry no data; everything under /api/ needs
+//      the session cookie or the equivalent header (R-03, A3).
 //   3. Mutations additionally require the custom request header and,
 //      when present, an exact Origin match (R-07). No CORS headers
 //      are ever emitted (R-08).
@@ -83,38 +87,6 @@ const AUTH_FAIL_SUMMARY_EVERY = 50;
 const CSP =
   "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'";
 
-// Option B (Shield, 0.9.5): the page a session-less top-level
-// navigation to the shell receives instead of the raw JSON refusal
-// — the page a user stares at when the private link's key never
-// reached the browser, the Android auto-open failure class. One
-// fixed static string: no script, no form, no input, nothing
-// fetched, nothing reflected from the request. It never contains
-// or asks for the token; it only points at the terminal, where
-// the private link is printed.
-const LANDING_PAGE = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CFQoE Scanner — private link needed</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 34rem; padding: 0 1rem; line-height: 1.55; }
-  h1 { font-size: 1.25rem; }
-</style>
-</head>
-<body>
-<h1>This page needs the scanner's private link</h1>
-<p>The scanner on this device opens only through its private link. The address that brought you here does not carry the session key, so there is nothing to show.</p>
-<p>Go back to the terminal where the scanner is running and open the full private link it printed when it started. Keep that link to yourself — on this device, it is what protects the scanner.</p>
-<div dir="rtl" lang="fa">
-<h1>این صفحه به لینک خصوصی اسکنر نیاز دارد</h1>
-<p>اسکنر روی این دستگاه فقط از طریق لینک خصوصی‌اش باز می‌شود. آدرسی که با آن به این صفحه رسیده‌اید کلید نشست را ندارد، برای همین چیزی برای نمایش داده نمی‌شود.</p>
-<p>به ترمینالی برگردید که اسکنر در آن در حال اجراست و لینک خصوصی کاملی را که هنگام شروع چاپ کرده، در مرورگر باز کنید. آن لینک را با کسی به اشتراک نگذارید؛ روی این دستگاه، همان لینک از اسکنر محافظت می‌کند.</p>
-</div>
-</body>
-</html>
-`;
-
 // The whole static surface: the three code assets plus the bundled
 // Vazirmatn subsets, read once at startup from the resolved public
 // directory. Serving from memory makes the confinement property
@@ -171,6 +143,17 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
   let boundPort = null;
   let stopped = false;
   let authFails = 0;
+  // The auto-open evidence loop (0.9.6, Shield D1–D4): three facts
+  // about this run's bootstrap history, kept only so a session-less
+  // data request can be classified — which world is the locked
+  // shell in? The classification is an inference from server-side
+  // observations only; it alters no auth decision (D4) and no
+  // client-reported diagnostic endpoint exists (D2).
+  let exchangeSucceeded = false; // any bootstrap exchange minted the cookie
+  let bootstrapPostArrived = false; // a POST /api/bootstrap reached the exchange
+  let bootstrapPostRefused = false; // …and the exchange refused its candidate
+  let shellFetchedSessionless = false; // a shell asset was served without a session
+  const diagnosedCases = new Set(); // D3: at most one line per case per run
 
   const expectedHost = () => `${BIND_HOST}:${boundPort}`;
   const origin = () => `http://${BIND_HOST}:${boundPort}`;
@@ -206,6 +189,35 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
 
   function logReject(reason, method) {
     webLog.warn("web.serve.reject", { reason, method });
+  }
+
+  // web.open.diagnose carries exactly one field (D1): the case
+  // class of a session-less data request, inferred from what the
+  // server itself observed this run —
+  //   cookie_lost: an exchange succeeded, yet this data request
+  //     arrived without the session (the cookie did not survive
+  //     to the context that is asking);
+  //   key_rejected: a bootstrap POST arrived and the exchange
+  //     refused its candidate (the fragment reached the shell but
+  //     its content was not the key);
+  //   no_key_yet: the shell was fetched session-less and no
+  //     bootstrap POST ever arrived (the fragment never reached
+  //     the shell, or the shell never ran).
+  // Evaluated only when a session-less data request is refused —
+  // the moment the locked shell asks and cannot be answered — and
+  // emitted at most once per class per run (D3).
+  function diagnoseOpen() {
+    const caseName = exchangeSucceeded
+      ? "cookie_lost"
+      : bootstrapPostRefused
+        ? "key_rejected"
+        : shellFetchedSessionless && !bootstrapPostArrived
+          ? "no_key_yet"
+          : null;
+    if (caseName && !diagnosedCases.has(caseName)) {
+      diagnosedCases.add(caseName);
+      webLog.warn("web.open.diagnose", { case: caseName });
+    }
   }
 
   function sessionFrom(req) {
@@ -772,11 +784,14 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
 
   // R-04/R-05: the one-time bootstrap exchange — one token, one
   // comparison, one cookie, one shared failure counter, whichever
-  // spelling carried the key (Shield C1). The token never appears
-  // in a response again: the 302 target is the clean URL and the
+  // spelling carried the key: this query spelling (which answers
+  // the 302 to the clean URL) or the fragment spelling's POST
+  // below (which answers 200). The token never appears in a
+  // response again: the 302 target is the clean URL and the
   // body is empty.
   function exchangeBootstrap(req, res, candidate) {
     if (safeEqual(candidate, token)) {
+      exchangeSucceeded = true;
       webLog.info("web.auth.bootstrap", {});
       applySecurityHeaders(res);
       res.writeHead(302, {
@@ -785,6 +800,50 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       });
       return res.end();
     }
+    logAuthFail("session", req.method);
+    return sendError(res, 403, "forbidden", "Forbidden");
+  }
+
+  // The fragment spelling's exchange (0.9.6, Shield A1/A2): the
+  // shell read the key out of its own URL fragment — a part of the
+  // address no GET ever carries to a server — and posts it here.
+  // The discipline is the mutation discipline: the Host was checked
+  // before routing, the custom request header is required, the
+  // Origin rule is the existing one, and exactly one candidate is
+  // extracted (the body's `key` field, and only when it is a
+  // string) into the same comparison, the same failure counter,
+  // the same log classes, and the same cookie the query exchange
+  // mints. A body that cannot be parsed yields no candidate and
+  // takes the exchange-failure path like any wrong key: the parse
+  // error is swallowed here on purpose, because its text can carry
+  // input-derived fragments and the candidate must have no route
+  // into any log line — the containment logger never sees it.
+  async function handleBootstrapPost(req, res) {
+    if (req.headers[REQUEST_HEADER] !== "1") {
+      logAuthFail("header", req.method);
+      return sendError(res, 403, "forbidden", "Forbidden");
+    }
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin !== undefined && requestOrigin !== origin()) {
+      logAuthFail("origin", req.method);
+      return sendError(res, 403, "forbidden", "Forbidden");
+    }
+    bootstrapPostArrived = true;
+    let candidate = null;
+    try {
+      const body = await readJsonBody(req, BODY_CAP_SMALL);
+      if (typeof body.key === "string") candidate = body.key;
+    } catch {
+      candidate = null; // Unparseable body: no candidate, failure path.
+    }
+    if (candidate !== null && safeEqual(candidate, token)) {
+      exchangeSucceeded = true;
+      webLog.info("web.auth.bootstrap", {});
+      applySecurityHeaders(res);
+      res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`);
+      return sendJson(res, 200, {});
+    }
+    bootstrapPostRefused = true;
     logAuthFail("session", req.method);
     return sendError(res, 403, "forbidden", "Forbidden");
   }
@@ -807,16 +866,13 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       return exchangeBootstrap(req, res, url.searchParams.get("t"));
     }
 
-    // The path spelling, delivered only to the Android opener
-    // (Shield C2, C5): the raw segment is compared as-is — no
-    // decoding step exists, so an encoded or malformed segment
-    // simply fails the comparison. The route serves nothing; it
-    // only performs the same exchange. Every other /t/ shape
-    // (missing segment, extra segments, trailing slash) is not
-    // this route and falls through to the unknown-route refusal.
-    const pathKey = req.method === "GET" ? /^\/t\/([^/]+)$/.exec(pathname) : null;
-    if (pathKey) {
-      return exchangeBootstrap(req, res, pathKey[1]);
+    // The fragment spelling's exchange (0.9.6, Shield A2): matched
+    // after the Host check and before the session gate — minting
+    // the session is its whole purpose. POST only; any other
+    // method on this path performs no exchange and falls through
+    // to the normal gates below.
+    if (req.method === "POST" && pathname === "/api/bootstrap") {
+      return handleBootstrapPost(req, res);
     }
 
     const isApi = pathname.startsWith("/api/");
@@ -826,25 +882,25 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
       return sendError(res, 404, "not_found", "Not found");
     }
 
-    // R-03: every route — static and API alike — requires the session.
-    if (!sessionFrom(req)) {
-      logAuthFail("session", req.method);
-      // Option B: a session-less top-level navigation to the shell
-      // gets the fixed landing page instead of the machine-readable
-      // refusal — same 403, same security headers, no data either
-      // way. Asset and API paths keep the JSON shape exactly.
-      if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-        applySecurityHeaders(res);
-        res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
-        return res.end(LANDING_PAGE);
-      }
-      return sendError(res, 403, "forbidden", "Forbidden");
-    }
-
+    // A3: the six shell assets are the session-less allowlist —
+    // GET only, the same bytes and the same security headers with
+    // or without a session. They carry no data; every byte of data
+    // stays behind the session gate on /api/* below. Serving one
+    // session-less is a fact the open-flow diagnostic keeps.
     if (asset) {
+      if (!sessionFrom(req)) shellFetchedSessionless = true;
       applySecurityHeaders(res);
       res.writeHead(200, { "Content-Type": asset.type });
       return res.end(asset.body);
+    }
+
+    // R-03: every API route requires the session. A refusal here
+    // is also the diagnostic's one trigger: a locked shell just
+    // asked for data and could not be answered (Shield D1–D4).
+    if (!sessionFrom(req)) {
+      diagnoseOpen();
+      logAuthFail("session", req.method);
+      return sendError(res, 403, "forbidden", "Forbidden");
     }
 
     // R-07: mutations need the session (above), the custom header,
@@ -942,16 +998,20 @@ export function createWebServer({ layout, onStopRequest = null } = {}) {
     webLog.info("web.start", { port: boundPort, bind: BIND_HOST });
     const url = `http://${BIND_HOST}:${boundPort}/`;
     const bootstrapUrl = `${url}?t=${token}`;
-    // The path spelling of the same key, returned for the Android
-    // opener only (Shield C5): it is never printed and never
-    // logged — the printed link stays the query form everywhere.
-    const bootstrapPathUrl = `${url}t/${token}`;
+    // The fragment spelling of the same key, returned for the
+    // Android opener only (0.9.6, Shield A2): it is never printed
+    // and never logged — the printed link stays the query form
+    // everywhere. A fragment is not part of the address a handler
+    // routes on, so it survives the hops that stripped the query
+    // and the path spellings; the shell reads it locally and
+    // POSTs it to the exchange.
+    const bootstrapFragmentUrl = `${url}#${token}`;
     if (openBrowser) {
       await openInBrowser(
-        bootstrapUrlForPlatform(process.platform, { bootstrapUrl, bootstrapPathUrl }),
+        bootstrapUrlForPlatform(process.platform, { bootstrapUrl, bootstrapFragmentUrl }),
       );
     }
-    return { port: boundPort, url, bootstrapUrl, bootstrapPathUrl };
+    return { port: boundPort, url, bootstrapUrl, bootstrapFragmentUrl };
   }
 
   async function stop(reason = "shutdown") {

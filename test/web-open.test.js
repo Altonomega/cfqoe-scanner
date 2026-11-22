@@ -59,12 +59,12 @@ test("unknown platforms get no attempts", () => {
   assert.deepEqual(buildOpenAttempts("freebsd", URL, {}), []);
 });
 
-test("bootstrapUrlForPlatform: only the Android opener receives the path spelling (Shield C5)", () => {
+test("bootstrapUrlForPlatform: only the Android opener receives the fragment spelling (0.9.6, Shield A2)", () => {
   const session = {
     bootstrapUrl: "http://127.0.0.1:8797/?t=TOKEN",
-    bootstrapPathUrl: "http://127.0.0.1:8797/t/TOKEN",
+    bootstrapFragmentUrl: "http://127.0.0.1:8797/#TOKEN",
   };
-  assert.equal(bootstrapUrlForPlatform("android", session), session.bootstrapPathUrl);
+  assert.equal(bootstrapUrlForPlatform("android", session), session.bootstrapFragmentUrl);
   for (const platform of ["win32", "darwin", "linux", "freebsd"]) {
     assert.equal(bootstrapUrlForPlatform(platform, session), session.bootstrapUrl, platform);
   }

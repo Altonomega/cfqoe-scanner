@@ -89,6 +89,26 @@ function mutation(cookie, extra = {}) {
   };
 }
 
+// The logger's schema-v2 envelope; a record's own detail fields are
+// whatever keys remain after these are removed (the diagnose pin
+// D1 — exactly one detail field — is asserted against this list).
+const LOG_ENVELOPE = ["v", "time", "elapsedMs", "seq", "runId", "level", "phase", "event"];
+
+function readLogRecords(layout) {
+  return fs
+    .readdirSync(layout.logs)
+    .flatMap((name) => fs.readFileSync(path.join(layout.logs, name), "utf8").split("\n"))
+    .filter((line) => line.trim())
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 test("bootstrap: the token URL 302s to a clean URL and sets an HttpOnly SameSite=Strict cookie (R-04, R-05)", async () => {
   const { layout } = makeLayout();
   const { api, port, bootstrapUrl } = await startServer(layout);
@@ -114,28 +134,58 @@ test("bootstrap: the token URL 302s to a clean URL and sets an HttpOnly SameSite
   }
 });
 
-test("path bootstrap: /t/<token> performs the identical exchange for the Android-delivered link (0.9.5, Shield C1–C4)", async () => {
+test("fragment bootstrap: start() returns the fragment spelling for the Android opener; the /t/ spelling is retired (0.9.6, Shield A5)", async () => {
   const { layout } = makeLayout();
-  const { api, port, bootstrapUrl, bootstrapPathUrl } = await startServer(layout);
+  const { api, port, url, bootstrapUrl, bootstrapFragmentUrl, bootstrapPathUrl } = await startServer(layout);
   try {
-    // One key, two spellings: the path segment is the query token,
-    // and its alphabet is the path-safe one the route relies on.
+    // One key, two spellings left: the query token is the fragment
+    // token, and its alphabet is the fragment-safe one the shell's
+    // boot relies on.
     const token = new URL(bootstrapUrl).searchParams.get("t");
-    assert.match(token, /^[A-Za-z0-9_-]{22}$/, "the key's alphabet is path-safe (Shield C2)");
-    assert.equal(new URL(bootstrapPathUrl).pathname, `/t/${token}`);
-
+    assert.match(token, /^[A-Za-z0-9_-]{22}$/, "the key's alphabet is fragment-safe");
+    assert.equal(bootstrapFragmentUrl, `${url}#${token}`);
+    assert.equal(bootstrapPathUrl, undefined, "the retired spelling is not returned (A5)");
+    // The retired route is an unknown route now: no exchange, no
+    // cookie, and no session was minted by it.
     const res = await rawRequest({ port, path: `/t/${token}` });
-    assert.equal(res.status, 302);
-    assert.equal(res.headers.location, "/", "the key never rides the redirect target");
-    assert.equal(res.body, "", "the exchange answers no body");
-    // The same cookie string the query exchange sets (Shield C1).
-    const setCookie = res.headers["set-cookie"][0];
-    assert.equal(setCookie, `cfqoe_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
+    assert.equal(res.status, 404);
+    assert.equal(res.headers["set-cookie"], undefined);
+    const state = await rawRequest({ port, path: "/api/state" });
+    assert.equal(state.status, 403);
+  } finally {
+    await api.stop("test");
+  }
+});
+
+test("fragment exchange: POST /api/bootstrap mints the identical cookie for the correct key (0.9.6, Shield A1/A2)", async () => {
+  const { layout } = makeLayout();
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const token = new URL(bootstrapUrl).searchParams.get("t");
+    // The query exchange's cookie string is the reference bytes.
+    const { res: queryRes } = await bootstrap(port, bootstrapUrl);
+    const referenceCookie = queryRes.headers["set-cookie"][0];
+
+    const res = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json", "x-cfqoe-request": "1" },
+      body: JSON.stringify({ key: token }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), {});
+    assert.equal(
+      res.headers["set-cookie"][0],
+      referenceCookie,
+      "byte-for-byte the query exchange's cookie (A1)",
+    );
+    assert.ok(!res.body.includes(token), "the key never rides the response body");
     // The cookie the exchange minted is the session.
     const state = await rawRequest({
       port,
       path: "/api/state",
-      headers: authed(setCookie.split(";")[0]),
+      headers: authed(res.headers["set-cookie"][0].split(";")[0]),
     });
     assert.equal(state.status, 200);
   } finally {
@@ -143,54 +193,235 @@ test("path bootstrap: /t/<token> performs the identical exchange for the Android
   }
 });
 
-test("path bootstrap refusals: a wrong key 403s without a cookie, near-miss shapes 404, the Host check still leads (Shield C2)", async () => {
+test("fragment exchange refusals: wrong, non-string, missing and unparseable candidates all take the one failure path (0.9.6, Shield A1/A2)", async () => {
   const { layout } = makeLayout();
   const { api, port, bootstrapUrl } = await startServer(layout);
+  const token = new URL(bootstrapUrl).searchParams.get("t");
+  const post = (body, headers = {}) =>
+    rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json", "x-cfqoe-request": "1", ...headers },
+      body,
+    });
   try {
-    const token = new URL(bootstrapUrl).searchParams.get("t");
-    const wrong = await rawRequest({ port, path: "/t/AAAAAAAAAAAAAAAAAAAAAA" });
-    assert.equal(wrong.status, 403);
-    assert.equal(wrong.headers["set-cookie"], undefined);
-    // An encoded segment is compared raw and simply fails: no
-    // decoding step exists anywhere in the route (Shield C2).
-    const encoded = await rawRequest({
-      port,
-      path: `/t/%${token.charCodeAt(0).toString(16)}${token.slice(1)}`,
-    });
-    assert.equal(encoded.status, 403);
-    assert.equal(encoded.headers["set-cookie"], undefined);
-    // Near-miss shapes are not the route: unknown-route 404.
-    for (const requestPath of ["/t", "/t/", "/t/a/b", `/t/${token}/`]) {
-      const res = await rawRequest({ port, path: requestPath });
-      assert.equal(res.status, 404, requestPath);
+    const refusals = [
+      JSON.stringify({ key: "AAAAAAAAAAAAAAAAAAAAAA" }), // wrong key
+      JSON.stringify({ key: 42 }), // a non-string candidate is no candidate
+      JSON.stringify({}), // no candidate at all
+      "this is not json", // an unparseable body yields no candidate
+    ];
+    for (const body of refusals) {
+      const res = await post(body);
+      assert.equal(res.status, 403, body);
       assert.equal(res.headers["set-cookie"], undefined);
+      assert.deepEqual(JSON.parse(res.body), { error: "forbidden", message: "Forbidden" });
     }
-    // No POST exchange exists on this route.
-    const post = await rawRequest({ port, method: "POST", path: `/t/${token}`, body: "" });
-    assert.equal(post.status, 404);
-    assert.equal(post.headers["set-cookie"], undefined);
-    // The Host check runs before the exchange, on this route too.
-    const badHost = await rawRequest({
-      port,
-      path: `/t/${token}`,
-      headers: { host: "example.com" },
-    });
-    assert.equal(badHost.status, 403);
-    assert.equal(badHost.headers["set-cookie"], undefined);
+    // Even the correct key inside a body the JSON path refuses
+    // (wrong content type) produces ONLY the exchange-failure
+    // response — the parse failure never reaches the error logger,
+    // whose text could carry input-derived fragments (A2).
+    const wrongType = await post(JSON.stringify({ key: token }), { "content-type": "text/plain" });
+    assert.equal(wrongType.status, 403);
+    assert.equal(wrongType.headers["set-cookie"], undefined);
+    // Extra fields beside a string key are inert: the one
+    // candidate is extracted and exchanged.
+    const ok = await post(JSON.stringify({ key: token, extra: "ignored" }));
+    assert.equal(ok.status, 200);
+    assert.ok(ok.headers["set-cookie"]);
+
+    await api.stop("test");
+    const records = readLogRecords(layout);
+    const fails = records.filter((r) => r.event === "web.auth.fail");
+    assert.equal(
+      fails.filter((r) => r.reason === "session" && r.method === "POST").length,
+      refusals.length + 1,
+      "every refused candidate counts once on the shared counter, as a session failure",
+    );
+    assert.equal(records.filter((r) => r.event === "web.auth.bootstrap").length, 1);
+    assert.equal(
+      records.filter((r) => r.event === "web.serve.error").length,
+      0,
+      "no parse failure ever reached the containment logger (A2)",
+    );
   } finally {
     await api.stop("test");
   }
 });
 
-test("path bootstrap leaves no trace in the logs: neither the key nor attempted segments (Shield C3)", async () => {
+test("fragment exchange discipline: the request header and the Origin rule guard the route; other methods and foreign Hosts get no exchange (0.9.6, Shield A2/A8)", async () => {
+  const { layout } = makeLayout();
+  const { api, port, bootstrapUrl } = await startServer(layout);
+  try {
+    const token = new URL(bootstrapUrl).searchParams.get("t");
+    const body = JSON.stringify({ key: token });
+    // Without the custom header there is no exchange, even for the
+    // correct key.
+    const noHeader = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    assert.equal(noHeader.status, 403);
+    assert.equal(noHeader.headers["set-cookie"], undefined);
+    // A foreign Origin is refused under the existing rule.
+    const badOrigin = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: {
+        "content-type": "application/json",
+        "x-cfqoe-request": "1",
+        origin: "http://example.com",
+      },
+      body,
+    });
+    assert.equal(badOrigin.status, 403);
+    assert.equal(badOrigin.headers["set-cookie"], undefined);
+    // The Host check runs before the exchange, on this route too.
+    const badHost = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json", "x-cfqoe-request": "1", host: "example.com" },
+      body,
+    });
+    assert.equal(badHost.status, 403);
+    assert.equal(badHost.headers["set-cookie"], undefined);
+    // GET on the route performs no exchange: the session gate
+    // answers it like any other API path.
+    const get = await rawRequest({ port, path: "/api/bootstrap" });
+    assert.equal(get.status, 403);
+    assert.equal(get.headers["set-cookie"], undefined);
+    assert.deepEqual(JSON.parse(get.body), { error: "forbidden", message: "Forbidden" });
+    // None of the above minted a session.
+    const state = await rawRequest({ port, path: "/api/state" });
+    assert.equal(state.status, 403);
+  } finally {
+    await api.stop("test");
+  }
+});
+
+test("diagnose no_key_yet: the shell was fetched session-less, no bootstrap POST arrived, and a data request is refused (0.9.6, Shield D1–D4)", async () => {
+  const { layout } = makeLayout();
+  const { api, port } = await startServer(layout);
+  try {
+    await rawRequest({ port, path: "/" });
+    await rawRequest({ port, path: "/app.js" });
+    const refused = await rawRequest({ port, path: "/api/state" });
+    assert.equal(refused.status, 403);
+    // A second refused request does not repeat the line (D3).
+    await rawRequest({ port, path: "/api/state" });
+    await api.stop("test");
+    const diagnoses = readLogRecords(layout).filter((r) => r.event === "web.open.diagnose");
+    assert.equal(diagnoses.length, 1, "at most one diagnose line per case per run (D3)");
+    assert.equal(diagnoses[0].case, "no_key_yet");
+    assert.deepEqual(
+      Object.keys(diagnoses[0]).filter((k) => !LOG_ENVELOPE.includes(k)),
+      ["case"],
+      "the event carries exactly one field (D1)",
+    );
+  } finally {
+    await api.stop("test");
+  }
+});
+
+test("diagnose key_rejected: a bootstrap POST arrived and the exchange refused its candidate (0.9.6, Shield D1–D4)", async () => {
+  const { layout } = makeLayout();
+  const { api, port } = await startServer(layout);
+  try {
+    await rawRequest({ port, path: "/" });
+    const refusedPost = await rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json", "x-cfqoe-request": "1" },
+      body: JSON.stringify({ key: "AAAAAAAAAAAAAAAAAAAAAA" }),
+    });
+    assert.equal(refusedPost.status, 403);
+    const refused = await rawRequest({ port, path: "/api/state" });
+    assert.equal(refused.status, 403);
+    await api.stop("test");
+    const diagnoses = readLogRecords(layout).filter((r) => r.event === "web.open.diagnose");
+    assert.equal(diagnoses.length, 1);
+    assert.equal(diagnoses[0].case, "key_rejected");
+  } finally {
+    await api.stop("test");
+  }
+});
+
+test("diagnose cookie_lost: an exchange succeeded and a data request still arrives session-less (0.9.6, Shield D1–D4)", async () => {
+  // The fragment spelling: the POST minted the cookie, but the
+  // data request arrives without it — the cookie was stranded
+  // between the exchange and the context that is asking. (The
+  // class is an inference from these two observations; it is
+  // named as one in the wave report.)
+  const first = makeLayout();
+  const s1 = await startServer(first.layout);
+  try {
+    const token = new URL(s1.bootstrapUrl).searchParams.get("t");
+    const post = await rawRequest({
+      port: s1.port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json", "x-cfqoe-request": "1" },
+      body: JSON.stringify({ key: token }),
+    });
+    assert.equal(post.status, 200);
+    const refused = await rawRequest({ port: s1.port, path: "/api/state" }); // deliberately cookieless
+    assert.equal(refused.status, 403);
+    await s1.api.stop("test");
+    const diagnoses = readLogRecords(first.layout).filter((r) => r.event === "web.open.diagnose");
+    assert.equal(diagnoses.length, 1);
+    assert.equal(diagnoses[0].case, "cookie_lost");
+  } finally {
+    await s1.api.stop("test");
+  }
+  // The query spelling feeds the same inference from the same flag.
+  const second = makeLayout();
+  const s2 = await startServer(second.layout);
+  try {
+    await bootstrap(s2.port, s2.bootstrapUrl); // 302 + cookie, deliberately unused
+    const refused = await rawRequest({ port: s2.port, path: "/api/state" });
+    assert.equal(refused.status, 403);
+    await s2.api.stop("test");
+    const diagnoses = readLogRecords(second.layout).filter((r) => r.event === "web.open.diagnose");
+    assert.equal(diagnoses.length, 1);
+    assert.equal(diagnoses[0].case, "cookie_lost");
+  } finally {
+    await s2.api.stop("test");
+  }
+});
+
+test("the key and attempted candidates leave no trace: zero log lines and zero response bodies across the whole battery (0.9.6, Shield C3/A8)", async () => {
   const { layout } = makeLayout();
   const { api, port, bootstrapUrl } = await startServer(layout);
   const token = new URL(bootstrapUrl).searchParams.get("t");
-  const garbage = "GARBAGESEGMENTZQXW";
+  const garbage = "GARBAGEKEYZZZZQXWJVK";
+  const bodies = [];
+  const track = (res) => {
+    bodies.push(res.body);
+    return res;
+  };
+  const post = (key) =>
+    rawRequest({
+      port,
+      method: "POST",
+      path: "/api/bootstrap",
+      headers: { "content-type": "application/json", "x-cfqoe-request": "1" },
+      body: JSON.stringify({ key }),
+    });
   try {
-    await rawRequest({ port, path: `/t/${token}` });
-    await rawRequest({ port, path: `/t/${garbage}` });
-    await rawRequest({ port, path: `/t/${garbage}/extra` });
+    track((await bootstrap(port, bootstrapUrl)).res); // query exchange: 302, empty body
+    track(await rawRequest({ port, path: `/t/${token}` })); // the retired spelling: 404
+    track(await rawRequest({ port, path: "/" })); // the public shell
+    track(await rawRequest({ port, path: "/app.js" })); // its assets
+    track(await post(garbage)); // a refused candidate
+    track(await post(token)); // the fragment exchange: 200 {}
+    track(await rawRequest({ port, path: "/api/state" })); // a refused data request
     await api.stop("test");
     const logText = fs
       .readdirSync(layout.logs)
@@ -201,64 +432,66 @@ test("path bootstrap leaves no trace in the logs: neither the key nor attempted 
     assert.ok(logText.includes("web.auth.fail"));
     assert.ok(logText.includes("web.serve.reject"));
     assert.ok(!logText.includes(token), "the key appears in zero log lines");
-    assert.ok(!logText.includes(garbage), "attempted segments appear in zero log lines");
+    assert.ok(!logText.includes(garbage), "attempted candidates appear in zero log lines");
+    for (const body of bodies) {
+      assert.ok(!body.includes(token), "the key appears in zero response bodies");
+      assert.ok(!body.includes(garbage), "attempted candidates appear in zero response bodies");
+    }
   } finally {
     await api.stop("test");
   }
 });
 
-test("landing page: a session-less navigation to the shell gets the fixed page; assets and API keep the JSON refusal (option B)", async () => {
+test("public shell: the six assets serve session-less with the same bytes and headers; the API stays gated (0.9.6, Shield A3/A8)", async () => {
   const { layout } = makeLayout();
   const { api, port, bootstrapUrl } = await startServer(layout);
   try {
     const token = new URL(bootstrapUrl).searchParams.get("t");
-    const landing = await rawRequest({ port, path: "/" });
-    assert.equal(landing.status, 403);
-    assert.match(landing.headers["content-type"], /^text\/html/);
-    assert.equal(landing.headers["cache-control"], "no-store");
-    assert.match(landing.headers["content-security-policy"], /default-src 'self'/);
-    assert.equal(landing.headers["x-content-type-options"], "nosniff");
-    // One fixed string that only instructs: no script, no form,
-    // no input, nothing fetched — and never the key.
-    assert.match(landing.body, /private link/);
-    assert.doesNotMatch(landing.body, /<script|<form|<input|<link|http-equiv/i);
-    assert.ok(!landing.body.includes(token), "the page never contains the key");
-    // /index.html is the same navigation and serves the same bytes.
-    const index = await rawRequest({ port, path: "/index.html" });
-    assert.equal(index.status, 403);
-    assert.equal(index.body, landing.body);
-    // Nothing from the request is reflected: a junk query and a
-    // junk agent change nothing.
-    const junk = await rawRequest({
-      port,
-      path: "/?ref=somejunk",
-      headers: { "user-agent": "junk-agent" },
-    });
-    assert.equal(junk.status, 403);
-    assert.equal(junk.body, landing.body);
-    // Asset and API paths keep the machine-readable refusal exactly.
-    for (const requestPath of ["/app.js", "/app.css", "/api/state"]) {
+    const { cookie } = await bootstrap(port, bootstrapUrl);
+    // The allowlist is exactly the six assets: byte-identical with
+    // and without a session (one shell, one bytes — A7), the same
+    // security headers, and never the key.
+    for (const requestPath of [
+      "/",
+      "/index.html",
+      "/app.css",
+      "/app.js",
+      "/fonts/Vazirmatn-Regular.woff2",
+      "/fonts/Vazirmatn-Bold.woff2",
+    ]) {
+      const open = await rawRequest({ port, path: requestPath });
+      assert.equal(open.status, 200, requestPath);
+      assert.equal(open.headers["cache-control"], "no-store");
+      assert.match(open.headers["content-security-policy"], /default-src 'self'/);
+      assert.equal(open.headers["x-content-type-options"], "nosniff");
+      const withSession = await rawRequest({ port, path: requestPath, headers: authed(cookie) });
+      assert.equal(withSession.status, 200, requestPath);
+      assert.equal(open.body, withSession.body, `${requestPath}: one bytes for everyone`);
+      assert.ok(!open.body.includes(token), `${requestPath} never carries the key`);
+    }
+    // The shell served is the real shell, not a landing page.
+    const shell = await rawRequest({ port, path: "/" });
+    assert.match(shell.body, /<title>CFQoE Scanner/);
+    // Data routes keep the machine-readable refusal exactly.
+    for (const requestPath of ["/api/state", "/api/events", "/api/system"]) {
       const res = await rawRequest({ port, path: requestPath });
       assert.equal(res.status, 403, requestPath);
       assert.match(res.headers["content-type"], /^application\/json/);
       assert.deepEqual(JSON.parse(res.body), { error: "forbidden", message: "Forbidden" });
     }
-    // With a session the shell itself is served, not the landing.
-    const { cookie } = await bootstrap(port, bootstrapUrl);
-    const shell = await rawRequest({ port, path: "/", headers: authed(cookie) });
-    assert.equal(shell.status, 200);
-    assert.match(shell.body, /<title>CFQoE Scanner/);
-    assert.notEqual(shell.body, landing.body);
+    // Unknown routes keep their 404, session or not.
+    const missing = await rawRequest({ port, path: "/nope.js" });
+    assert.equal(missing.status, 404);
   } finally {
     await api.stop("test");
   }
 });
 
-test("without a session every route class is 403 — static, API, events, mutations (R-03)", async () => {
+test("without a session the API is 403 — data, events, mutations — while the shell assets are public (R-03 as amended by Shield A3)", async () => {
   const { layout } = makeLayout();
   const { api, port } = await startServer(layout);
   try {
-    for (const requestPath of ["/", "/app.css", "/app.js", "/api/state", "/api/catalog", "/api/events"]) {
+    for (const requestPath of ["/api/state", "/api/catalog", "/api/events", "/api/system", "/api/settings", "/api/config", "/api/reports", "/api/logs"]) {
       const res = await rawRequest({ port, path: requestPath });
       assert.equal(res.status, 403, requestPath);
     }
@@ -270,6 +503,10 @@ test("without a session every route class is 403 — static, API, events, mutati
       body: "{}",
     });
     assert.equal(post.status, 403);
+    for (const requestPath of ["/", "/index.html", "/app.css", "/app.js"]) {
+      const res = await rawRequest({ port, path: requestPath });
+      assert.equal(res.status, 200, requestPath);
+    }
   } finally {
     await api.stop("test");
   }

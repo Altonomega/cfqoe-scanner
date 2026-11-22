@@ -412,6 +412,14 @@ const Live = {
     try { const c = new AbortController(); const id = setTimeout(() => c.abort(), 1500); const r = await fetch("/api/state", { credentials: "same-origin", signal: c.signal }); clearTimeout(id); return r.ok; }
     catch { return false; }
   },
+  // Boot's three-way answer (0.9.6): 200 — a session answers, boot
+  // live; 403 — the server is there but this browser holds no
+  // session, the locked case; 0 — nothing answered, the offline
+  // case. probe() above collapses the last two; boot must not.
+  async stateStatus() {
+    try { const c = new AbortController(); const id = setTimeout(() => c.abort(), 1500); const r = await fetch("/api/state", { credentials: "same-origin", signal: c.signal }); clearTimeout(id); return r.status; }
+    catch { return 0; }
+  },
   getState() { return this.api("/api/state"); },
   getCatalog() { return this.api("/api/catalog"); },
   getSettings() { return this.api("/api/settings"); },
@@ -1615,6 +1623,32 @@ function enterOffline() {
   app.onConn("none");
   renderOffline();
 }
+// The locked plate (0.9.6): the shell loaded — it is public — but
+// no session answers, so the private link's key never became a
+// cookie in this browser. The copy is option B's shipped bilingual
+// text, verbatim and fixed: it only points at the terminal, where
+// the private link is printed. No field, no form, nothing to paste
+// into (Shield B as amended) — the link is opened in the browser,
+// never typed into the page.
+function renderLocked() {
+  if (app.view && app.view.destroy) app.view.destroy();
+  app.view = null; app.viewName = "locked"; app.viewParts = [];
+  $("#view").innerHTML = `<h2 class="view-title">This page needs the scanner's private link</h2>
+  <p class="view-sub">The scanner on this device opens only through its private link. The address that brought you here does not carry the session key, so there is nothing to show.</p>
+  <p class="view-sub">Go back to the terminal where the scanner is running and open the full private link it printed when it started. Keep that link to yourself — on this device, it is what protects the scanner.</p>
+  <div dir="rtl" lang="fa">
+  <h2 class="view-title">این صفحه به لینک خصوصی اسکنر نیاز دارد</h2>
+  <p class="view-sub">اسکنر روی این دستگاه فقط از طریق لینک خصوصی‌اش باز می‌شود. آدرسی که با آن به این صفحه رسیده‌اید کلید نشست را ندارد، برای همین چیزی برای نمایش داده نمی‌شود.</p>
+  <p class="view-sub">به ترمینالی برگردید که اسکنر در آن در حال اجراست و لینک خصوصی کاملی را که هنگام شروع چاپ کرده، در مرورگر باز کنید. آن لینک را با کسی به اشتراک نگذارید؛ روی این دستگاه، همان لینک از اسکنر محافظت می‌کند.</p>
+  </div>`;
+}
+function enterLocked() {
+  if (app.locked) return;
+  Live.disconnect();
+  app.locked = true;
+  app.onConn("none");
+  renderLocked();
+}
 async function retryLive() {
   if (await Live.probe().catch(() => false)) {
     app.offline = false; app._offStill = null;
@@ -1635,10 +1669,29 @@ function scheduleReachCheck() {
     if (!(await Live.probe().catch(() => false))) enterOffline();
   }, 4000);
 }
+// The fragment spelling of the private link (0.9.6, Shield A4):
+// the key is the whole fragment when the fragment is not a route.
+// Routes always carry the "#/" prefix; the key's own alphabet is
+// the server's pinned one (base64url, 22 chars). Anything else in
+// the fragment is not a key and is left exactly as found.
+function fragmentKey() {
+  const h = location.hash;
+  if (h.length < 2 || h.startsWith("#/")) return null;
+  const candidate = h.slice(1);
+  return /^[A-Za-z0-9_-]{22}$/.test(candidate) ? candidate : null;
+}
 (function boot() {
-  // Token hygiene: the one-time bootstrap query is consumed by the
-  // server's 302; if it ever survives into the address bar, strip it.
-  // The token is never read, stored, or sent by this code (R-04).
+  // Key hygiene, two spellings (R-04, Shield A4). The query key is
+  // the server's: its 302 consumes it, this code never reads it,
+  // and if it ever survives into the address bar, strip it. The
+  // fragment key is the shell's one exception: a fragment is never
+  // sent to a server, so the shell reads it exactly once at boot,
+  // opaquely — never rendered, never stored, never placed in a
+  // URL — offers it to POST /api/bootstrap as the exchange
+  // candidate, and scrubs it from the address bar whether the
+  // exchange took it or not. The exchange is believed only when
+  // /api/state answers 200 on the cookie afterwards; a POST 200
+  // alone proves nothing, the cookie may not have survived.
   const lp = new URLSearchParams(location.search).get("lang");
   if (lp === "fa" || lp === "en") lang = lp; // preview/share override; not persisted
   if (/[?&](t|k)=/.test(location.search)) history.replaceState(null, "", location.pathname + location.hash);
@@ -1669,7 +1722,14 @@ function scheduleReachCheck() {
   }, 1000);
   (async () => {
     app.src = Live;
-    if (await Live.probe().catch(() => false)) { await connectLive(); route(); }
+    const key = fragmentKey();
+    if (key) {
+      await Live.post("/api/bootstrap", { key }).catch(() => null);
+      history.replaceState(null, "", "/");
+    }
+    const status = await Live.stateStatus();
+    if (status === 200) { await connectLive(); route(); }
+    else if (status === 403) enterLocked();
     else enterOffline();
   })();
 })();
